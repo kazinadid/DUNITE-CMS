@@ -3,7 +3,6 @@
 import {
   ArrowLeft,
   CalendarClock,
-  CheckCircle2,
   ImageIcon,
   Loader2,
   Send,
@@ -13,6 +12,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
+import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import type { Post, PostStatus } from '@/features/posts';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -31,7 +31,7 @@ const PLATFORMS = [
 type PlatformId   = (typeof PLATFORMS)[number]['id'];
 type ScheduleMode = 'now' | 'schedule';
 type SubmitAction = 'publish' | 'draft';
-type PageStatus   = 'idle' | 'success' | 'error';
+type LoadingAction = SubmitAction | null;
 
 interface ComposeFormProps {
   /** When provided, the form acts as an editor (UPDATE) instead of a creator (INSERT). */
@@ -156,6 +156,31 @@ function describeError(step: string, err: unknown): string {
     );
   }
   return `${step} failed: ${formatErrorSummary(n)}`;
+}
+
+function getSafeErrorMessage(step: string): string {
+  switch (step) {
+    case 'Saving post':
+    case 'Updating post':
+      return 'Something went wrong while saving your post. Please try again.';
+    case 'Clearing previous platforms':
+    case 'Saving platforms':
+      return 'Something went wrong while saving the selected platforms.';
+    case 'Uploading media':
+      return 'The media upload did not complete. Please try uploading the file again.';
+    case 'Saving media record':
+      return 'Something went wrong while saving media.';
+    case 'Orphan post cleanup':
+      return 'The post could not be cleaned up automatically. Please refresh and review your posts.';
+    default:
+      return 'Something went wrong. Please try again.';
+  }
+}
+
+function getActionErrorTitle(action: SubmitAction, scheduleMode: ScheduleMode): string {
+  if (action === 'draft') return 'Draft was not saved';
+  if (scheduleMode === 'schedule') return 'Post was not scheduled';
+  return 'Post was not published';
 }
 
 function logError(step: string, err: unknown) {
@@ -302,6 +327,12 @@ async function savePostMedia({
 export function ComposeForm({ initialPost }: ComposeFormProps) {
   const router  = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
+  const {
+    dialog,
+    success: showSuccess,
+    error: showError,
+    setDialogOpen,
+  } = useFeedback();
 
   const isEdit = Boolean(initialPost);
 
@@ -317,9 +348,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
   );
   const [scheduledAt,  setScheduledAt]  = useState(isoToLocalInput(initialPost?.scheduled_at ?? null));
   const [loading,      setLoading]      = useState(false);
-  const [pageStatus,   setPageStatus]   = useState<PageStatus>('idle');
-  const [errorMsg,     setErrorMsg]     = useState<string | null>(null);
-  const [successMsg,   setSuccessMsg]   = useState<string | null>(null);
+  const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
 
   // ── Resolve current user (only needed for create flow) ───────────────────
   useEffect(() => {
@@ -327,18 +356,19 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     supabase.auth.getUser().then(({ data, error }) => {
       if (error) {
         console.error('[compose] getUser error:', error.message);
-        setErrorMsg('Failed to load user session. Please refresh.');
-        setPageStatus('error');
+        showError({
+          title: 'Session could not be loaded',
+          description: 'Please refresh the page and try again.',
+        });
         return;
       }
       if (!data.user) { router.push('/login'); return; }
       setUserId(data.user.id);
     });
-  }, [router, userId]);
+  }, [router, showError, userId]);
 
   // ── Platform toggle ──────────────────────────────────────────────────────
   function togglePlatform(id: PlatformId) {
-    setErrorMsg(null);
     setPlatforms((prev) =>
       prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
     );
@@ -394,23 +424,25 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     console.log('[compose] handleSubmit', { action, isEdit, content, platforms, userId });
 
     if (!userId) {
-      setErrorMsg('Session not ready. Please wait a moment and try again.');
-      setPageStatus('error');
+      showError({
+        title: 'Session is not ready',
+        description: 'Please wait a moment and try again.',
+      });
       return;
     }
     if (loading) return;
 
     const validationError = validate(action);
     if (validationError) {
-      setErrorMsg(validationError);
-      setPageStatus('error');
+      showError({
+        title: 'Check your post',
+        description: validationError,
+      });
       return;
     }
 
     setLoading(true);
-    setPageStatus('idle');
-    setErrorMsg(null);
-    setSuccessMsg(null);
+    setLoadingAction(action);
 
     // Track partial state so we can roll back a freshly-created post if a
     // follow-up step fails.  Edit-mode never sets `createdNewPost = true`
@@ -489,6 +521,11 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           userId,
           file,
         });
+
+        showSuccess({
+          title: 'Media uploaded',
+          description: 'Your media file was attached to the post.',
+        });
       }
 
       // ── 4. Success ────────────────────────────────────────────────────
@@ -497,8 +534,13 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
         scheduled: `Post scheduled for ${new Date(scheduledAt).toLocaleString()}.`,
         draft:     isEdit ? 'Draft updated.'                                        : 'Draft saved.',
       };
-      setSuccessMsg(messages[postStatus]);
-      setPageStatus('success');
+      showSuccess({
+        title: messages[postStatus],
+        description:
+          postStatus === 'scheduled'
+            ? 'It will appear in your scheduled posts feed.'
+            : 'Your posts feed is now up to date.',
+      });
 
       if (isEdit) {
         setTimeout(() => router.push('/dashboard/posts'), 900);
@@ -525,10 +567,14 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
         }
       }
 
-      setPageStatus('error');
-      setErrorMsg(describeError(step, cause));
+      console.error('[compose] user-safe error:', describeError(step, cause));
+      showError({
+        title: getActionErrorTitle(action, scheduleMode),
+        description: getSafeErrorMessage(step),
+      });
     } finally {
       setLoading(false);
+      setLoadingAction(null);
     }
   }
 
@@ -546,16 +592,26 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
   const subheading = isEdit
     ? 'Update content, platforms, or scheduling.'
     : 'Compose and schedule content across platforms.';
+  const isScheduling = scheduleMode === 'schedule';
+  const primaryLoading = loading && loadingAction === 'publish';
+  const draftLoading = loading && loadingAction === 'draft';
   const primaryLabel =
-    loading
-      ? (isEdit ? 'Saving…' : 'Publishing…')
-      : scheduleMode === 'schedule'
+    primaryLoading
+      ? (isScheduling ? 'Scheduling…' : isEdit ? 'Saving…' : 'Publishing…')
+      : isScheduling
       ? (isEdit ? 'Save & schedule' : 'Schedule post')
       : (isEdit ? 'Save & publish' : 'Publish');
+  const draftLabel = draftLoading
+    ? 'Saving draft…'
+    : isEdit ? 'Save as draft' : 'Save Draft';
 
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
+    <>
+      <AppToast />
+      <AppDialog state={dialog} onOpenChange={setDialogOpen} />
+
     <div className="max-w-3xl mx-auto px-4 md:px-6 py-6 space-y-5">
       {/* Page header */}
       <div className="flex items-center gap-3">
@@ -574,27 +630,6 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
         </div>
       </div>
 
-      {/* Feedback banners */}
-      {pageStatus === 'success' && successMsg && (
-        <div
-          role="status"
-          className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
-        >
-          <CheckCircle2 size={15} className="shrink-0" aria-hidden />
-          {successMsg}
-        </div>
-      )}
-
-      {pageStatus === 'error' && errorMsg && (
-        <div
-          role="alert"
-          className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-        >
-          <X size={15} className="mt-0.5 shrink-0" aria-hidden />
-          {errorMsg}
-        </div>
-      )}
-
       {/* Content */}
       <FormSection title="Content">
         <div className="relative">
@@ -602,8 +637,6 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
             value={content}
             onChange={(e) => {
               setContent(e.target.value);
-              setErrorMsg(null);
-              if (pageStatus === 'error') setPageStatus('idle');
             }}
             placeholder="What do you want to share?"
             rows={6}
@@ -737,7 +770,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
               value={scheduledAt}
               min={minDatetime}
               disabled={loading}
-              onChange={(e) => { setScheduledAt(e.target.value); setErrorMsg(null); }}
+              onChange={(e) => setScheduledAt(e.target.value)}
               className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100 disabled:opacity-60 sm:w-auto"
             />
             <p className="mt-1.5 text-xs text-gray-400">
@@ -756,7 +789,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           disabled={loading}
           className="flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? (
+          {primaryLoading ? (
             <Loader2 size={15} className="animate-spin" aria-hidden />
           ) : (
             <Send size={15} aria-hidden />
@@ -771,8 +804,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           disabled={!canDraft}
           className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading && <Loader2 size={15} className="animate-spin" aria-hidden />}
-          {isEdit ? 'Save as draft' : 'Save Draft'}
+          {draftLoading && <Loader2 size={15} className="animate-spin" aria-hidden />}
+          {draftLabel}
         </button>
 
         {/* Cancel */}
@@ -784,6 +817,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
         </Link>
       </div>
     </div>
+    </>
   );
 }
 
