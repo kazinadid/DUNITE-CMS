@@ -7,6 +7,8 @@ import { usePathname, useRouter } from 'next/navigation';
 
 import { supabase } from '@/lib/supabaseClient';
 import type { Role } from '@/features/auth';
+import { AppToast } from '@/features/feedback';
+import { DashboardNotificationHost } from '@/features/notifications';
 import {
   isItemActive,
   visibleNavItems,
@@ -196,6 +198,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </button>
 
           <div className="ml-auto flex items-center gap-3">
+            <DashboardNotificationHost userId={user.id} />
+            <AppToast />
             <span className="hidden sm:block text-sm font-medium text-gray-800">
               {displayName}
             </span>

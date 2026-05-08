@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Lock } from 'lucide-react';
 import { RecentActivityWidget } from '@/features/activity';
+import { RecentNotificationsWidget } from '@/features/notifications';
 import { supabase } from '@/lib/supabaseClient';
 import type { Role } from '@/features/auth';
 
@@ -72,7 +73,8 @@ export default function DashboardPage() {
           <StatCard label="Scheduled posts" value="0" tone="warning" />
           <StatCard label="Failed posts"    value="0" tone="danger"  />
         </div>
-        <div className="lg:col-span-1">
+        <div className="space-y-4 lg:col-span-1">
+          <RecentNotificationsWidget />
           <RecentActivityWidget />
         </div>
       </div>
