@@ -27,6 +27,13 @@ export interface PostMedia {
   order_index: number;
 }
 
+export interface PostPublishEvent {
+  id: string;
+  created_at: string;
+  kind: 'info' | 'warn' | 'error' | 'success';
+  message: string;
+}
+
 export interface Post {
   id: string;
   user_id: string;
@@ -36,9 +43,15 @@ export interface Post {
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Last backend-reported publish failure message, when known. */
+  last_publish_error: string | null;
+  /** Number of publish attempts recorded by workers (0 if none). */
+  publish_attempt_count: number;
   author: PostAuthor | null;
   platforms: string[];
   media: PostMedia[];
+  /** Populated when loaded with `POST_DETAIL_SELECT`; otherwise []. */
+  publish_events: PostPublishEvent[];
 }
 
 export type StatusFilter = 'all' | PostStatus;
