@@ -29,6 +29,7 @@ export {
   resetToDraft,
   duplicatePost,
   rescheduleCalendarPost,
+  patchPostLifecycle,
 } from './services/postsService';
 
 // ── Types ───────────────────────────────────────────────────────────────────

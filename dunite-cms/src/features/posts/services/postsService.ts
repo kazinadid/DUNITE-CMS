@@ -139,3 +139,22 @@ export async function rescheduleCalendarPost(
   if (error) throw error;
   return mapPostRow(data as unknown as RawPostRow);
 }
+
+/** Calendar/modal workflow edits — constrained columns; RLS is the gate. */
+export async function patchPostLifecycle(
+  id: string,
+  patch: Partial<Pick<Post, 'status' | 'scheduled_at' | 'published_at'>>,
+): Promise<Post> {
+  const { data, error } = await supabase
+    .from('posts')
+    .update({
+      ...patch,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select(POST_SELECT)
+    .single();
+
+  if (error) throw error;
+  return mapPostRow(data as unknown as RawPostRow);
+}

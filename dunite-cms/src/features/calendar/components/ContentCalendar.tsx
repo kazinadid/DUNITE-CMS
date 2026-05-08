@@ -76,6 +76,12 @@ export function ContentCalendar({
           info.el.classList.add('dunite-fc-event-shell');
           paintFcEventElement(info.el);
         }}
+        eventDragStart={() => {
+          document.documentElement.classList.add('fc-dunite-dragging');
+        }}
+        eventDragStop={() => {
+          document.documentElement.classList.remove('fc-dunite-dragging');
+        }}
         eventContent={(arg: EventContentArg) => <CalendarPlannerEvent arg={arg} />}
         eventClick={(info: EventClickArg) => {
           info.jsEvent.preventDefault();

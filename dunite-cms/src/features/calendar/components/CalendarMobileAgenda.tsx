@@ -33,11 +33,16 @@ function localDayKey(iso: string): string {
 }
 
 interface CalendarMobileAgendaProps {
-  posts: Post[];
+  posts:     Post[];
   emptyHint?: ReactNode;
+  onOpenPost?: (post: Post) => void;
 }
 
-export function CalendarMobileAgenda({ posts, emptyHint }: CalendarMobileAgendaProps) {
+export function CalendarMobileAgenda({
+  posts,
+  emptyHint,
+  onOpenPost,
+}: CalendarMobileAgendaProps) {
   const groups = useMemo(() => {
     const map = new Map<string, Post[]>();
     const sorted = [...posts].sort(
@@ -74,7 +79,7 @@ export function CalendarMobileAgenda({ posts, emptyHint }: CalendarMobileAgendaP
             <ul className="space-y-2.5">
               {items.map((p) => (
                 <li key={p.id}>
-                  <CalendarEventCard post={p} compact />
+                  <CalendarEventCard post={p} compact onOpen={onOpenPost} />
                 </li>
               ))}
             </ul>

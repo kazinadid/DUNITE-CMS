@@ -1,21 +1,14 @@
 'use client';
 
-import type { CSSProperties } from 'react';
-
 import type { EventContentArg } from '@fullcalendar/core';
 
 import { PlatformIcon } from '@/features/composer';
 import type { PlatformId } from '@/features/composer/types';
 import type { Post } from '@/features/posts';
-
-import {
-  CALENDAR_PLATFORM_CHROME,
-  CALENDAR_PLATFORM_DOT,
-  gradientStops,
-} from '@/features/calendar/lib/platformAccent';
-import { postContentPreview } from '@/features/calendar/lib/toCalendarEvents';
 import { cn } from '@/lib/utils';
 
+import { CALENDAR_PLATFORM_CHROME } from '@/features/calendar/lib/platformAccent';
+import { formatCalendarSlotTime } from '@/features/calendar/lib/formatTime';
 import { CalendarStatusPill } from './CalendarStatusPill';
 
 interface CalendarPlannerEventProps {
@@ -30,109 +23,72 @@ function parsePlatform(raw: string): PlatformId | null {
   return null;
 }
 
-function previewLines(viewType?: string): { maxChars: number; lineClampClass: string } {
-  const vt = viewType ?? '';
-  if (vt.includes('dayGrid')) return { maxChars: 92, lineClampClass: 'line-clamp-2' };
-  if (vt.includes('timeGridWeek')) return { maxChars: 260, lineClampClass: 'line-clamp-5' };
-  return { maxChars: 440, lineClampClass: 'line-clamp-6' };
-}
+const defaultChrome =
+  'bg-muted/90 text-muted-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] ring-1 ring-border';
 
-function leftAccent(platformsParsed: PlatformId[]): CSSProperties {
-  const stops = gradientStops(platformsParsed);
-  const igSingle =
-    platformsParsed.length === 1 && platformsParsed[0] === 'instagram';
-  if (igSingle) {
-    return {
-      borderLeftWidth:     3,
-      borderLeftStyle:     'solid',
-      borderLeftColor:     '#c026d3',
-    };
-  }
-  if (platformsParsed.length >= 2) {
-    const a = CALENDAR_PLATFORM_DOT[platformsParsed[0]] ?? '#6b7280';
-    const b =
-      CALENDAR_PLATFORM_DOT[platformsParsed[1]] ??
-      CALENDAR_PLATFORM_DOT[platformsParsed[0]] ??
-      '#6b7280';
-    return {
-      borderLeftWidth: 3,
-      borderLeftStyle: 'solid',
-      borderLeftColor: 'transparent',
-      borderImageSource: `linear-gradient(180deg, ${a}, ${b})`,
-      borderImageSlice:  1,
-    };
-  }
-  const stripe = stops[0] ?? '#7a0000';
-  return {
-    borderLeftWidth:     3,
-    borderLeftStyle:     'solid',
-    borderLeftColor:     stripe,
-  };
-}
-
-/** Rich planner tile rendered inside FullCalendar event slots (month / week / day). */
+/** FullCalendar renders this as `.fc-event`; keep stable layout for drag + multi-day stripes. */
 export function CalendarPlannerEvent({ arg }: CalendarPlannerEventProps) {
   const post = arg.event.extendedProps.post as Post;
-  const flat =
-    post.content.replace(/\s+/g, ' ').trim() || postContentPreview(post.content);
+  const viewType = arg.view.type;
+  const compact = viewType === 'timeGridWeek' || viewType === 'timeGridDay';
+  const platformsParsed = post.platforms.map(parsePlatform).filter((p): p is PlatformId => Boolean(p));
+  const maxVisible = compact ? 2 : 4;
+  const hidden = platformsParsed.length - maxVisible;
+  const timeLine = post.scheduled_at ? formatCalendarSlotTime(post.scheduled_at) : '';
 
-  const { maxChars, lineClampClass } = previewLines(arg.view?.type);
-
-  const preview =
-    flat.length <= maxChars ? flat : `${flat.slice(0, maxChars - 1)}…`;
-
-  const platformsParsed = post.platforms
-    .map(parsePlatform)
-    .filter((p): p is PlatformId => Boolean(p));
-
-  const defaultChrome =
-    'bg-muted/90 text-muted-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] ring-1 ring-border';
-
-  const accentStyle = platformsParsed.length
-    ? leftAccent(platformsParsed)
-    : { borderLeftWidth: 3, borderLeftStyle: 'solid' as const, borderLeftColor: '#737373' };
+  const title = `${timeLine ? `${timeLine} · ` : ''}${post.content?.slice(0, 80) ?? 'Post'}${(post.content?.length ?? 0) > 80 ? '…' : ''}`;
 
   return (
-    <div className="calendar-planner-event w-full px-px py-[2px]">
-      <div
-        style={accentStyle}
-        className={cn(
-          'planner-event-face rounded-[11px] border border-zinc-200/90 bg-gradient-to-br from-white/99 via-white/97 to-white/92 pl-3 pr-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.96)] transition-[transform,box-shadow,border-color] duration-200 ease-out will-change-transform',
-          'ring-1 shadow-zinc-900/13 ring-black/[0.04]',
-        )}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <span className="min-w-0 font-mono text-[11px] font-bold tracking-tight text-zinc-800 tabular-nums">
-            {arg.timeText}
-          </span>
+    <div
+      className={cn(
+        'planner-event-face relative h-full overflow-hidden rounded-[10px] border border-border/70 bg-gradient-to-br from-card/98 via-card/95 to-muted/25 px-2 py-1.5 shadow-[0_6px_18px_-10px_rgba(15,23,42,0.22),inset_0_1px_0_rgba(255,255,255,0.88)] transition-[transform,box-shadow] duration-200 ease-out',
+        compact && 'rounded-[8px] px-1.5 py-1',
+      )}
+    >
+      <div className="flex min-h-0 flex-col gap-1">
+        <div className="flex min-w-0 items-center justify-between gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span
+              className={cn(
+                'truncate font-semibold tabular-nums text-[11px] text-neutral-900',
+                compact && 'text-[10px]',
+              )}
+            >
+              {timeLine}
+            </span>
+          </div>
           <CalendarStatusPill status={post.status} compact />
         </div>
 
-        {platformsParsed.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {platformsParsed.map((pid) => (
-              <span
-                key={pid}
-                title={pid}
-                className={cn(
-                  'inline-flex shrink-0 items-center justify-center rounded-lg p-[5px]',
-                  CALENDAR_PLATFORM_CHROME[pid] ?? defaultChrome,
-                )}
-              >
-                <PlatformIcon platform={pid} size={13} className="shrink-0 opacity-[0.96]" />
-              </span>
-            ))}
-          </div>
-        ) : null}
-
         <p
           className={cn(
-            'mt-2 text-[13px] leading-snug font-semibold tracking-[-0.015em] text-zinc-800',
-            lineClampClass,
+            'line-clamp-2 min-h-0 text-[11px] leading-snug text-neutral-800',
+            compact && 'line-clamp-1 text-[10px]',
           )}
+          title={title}
         >
-          {preview}
+          {post.content?.trim() || 'Untitled post'}
         </p>
+
+        {platformsParsed.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1">
+            {platformsParsed.slice(0, maxVisible).map((pid) => (
+              <span
+                key={pid}
+                className={cn(
+                  'inline-flex max-w-full items-center gap-0.5 rounded-full px-1.5 py-[2px] text-[9px] font-semibold tracking-tight ring-1 ring-inset',
+                  CALENDAR_PLATFORM_CHROME[pid] ?? defaultChrome,
+                )}
+                title={pid}
+              >
+                <PlatformIcon platform={pid} size={10} />
+              </span>
+            ))}
+            {hidden > 0 ? (
+              <span className="text-[9px] font-semibold text-neutral-500">+{hidden}</span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

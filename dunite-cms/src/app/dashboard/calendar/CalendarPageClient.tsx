@@ -1,11 +1,11 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Role } from '@/features/auth';
 import {
+  CalendarEventDetailsModal,
   CalendarFilters,
   type CalendarFilterState,
   CalendarMobileAgenda,
@@ -13,14 +13,10 @@ import {
   CalendarToolbar,
   EmptyCalendarState,
 } from '@/features/calendar';
+import { formatCalendarSlotTime } from '@/features/calendar/lib/formatTime';
 import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import { ReadOnlyBanner } from '@/features/dashboard';
-import {
-  formatAbsolute,
-  listCalendarPosts,
-  rescheduleCalendarPost,
-  type Post,
-} from '@/features/posts';
+import { formatAbsolute, listCalendarPosts, rescheduleCalendarPost, type Post } from '@/features/posts';
 import { canEditPost, isAdmin } from '@/lib/rbac';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -40,7 +36,6 @@ interface CalendarPageClientProps {
 }
 
 export function CalendarPageClient({ role }: CalendarPageClientProps) {
-  const router = useRouter();
   const { dialog, success, error: showError, setDialogOpen } = useFeedback();
 
   const rangeRef          = useRef<{ start: Date; end: Date } | null>(null);
@@ -58,6 +53,7 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
   const [fetching, setFetching]       = useState(false);
   /** True after the first in-flight range query resolves (success or error). */
   const [ready, setReady]             = useState(false);
+  const [detailPost, setDetailPost]   = useState<Post | null>(null);
 
   const showUserFilter = isAdmin(role);
 
@@ -176,12 +172,23 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
     [loadRange],
   );
 
-  const handleOpenPost = useCallback(
-    (post: Post) => {
-      router.push(`/dashboard/posts/${post.id}/edit`);
-    },
-    [router],
-  );
+  const handleOpenPost = useCallback((post: Post) => {
+    setDetailPost(post);
+  }, []);
+
+  const handleCloseDetail = useCallback(() => {
+    setDetailPost(null);
+  }, []);
+
+  const handleDetailUpdated = useCallback((updated: Post) => {
+    setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    setDetailPost((prev) => (prev?.id === updated.id ? updated : prev));
+  }, []);
+
+  const handleDetailRemoved = useCallback((id: string) => {
+    setPosts((prev) => prev.filter((p) => p.id !== id));
+    setDetailPost((prev) => (prev?.id === id ? null : prev));
+  }, []);
 
   const handleReschedule = useCallback(
     async (post: Post, newStart: Date) => {
@@ -191,7 +198,7 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
         setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
         success({
           title:       'Post rescheduled',
-          description: `Now ${formatAbsolute(updated.scheduled_at ?? iso)}`,
+          description: `${formatCalendarSlotTime(updated.scheduled_at ?? iso)} · ${formatAbsolute(updated.scheduled_at ?? iso)}`,
         });
       } catch (e: unknown) {
         const msg =
@@ -215,6 +222,17 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
     <div className="space-y-6 p-4 md:p-6">
       <AppToast />
       <AppDialog state={dialog} onOpenChange={setDialogOpen} />
+
+      {detailPost ? (
+        <CalendarEventDetailsModal
+          key={`${detailPost.id}-${detailPost.updated_at}`}
+          post={detailPost}
+          role={role}
+          onClose={handleCloseDetail}
+          onPostUpdated={handleDetailUpdated}
+          onPostRemoved={handleDetailRemoved}
+        />
+      ) : null}
 
       <CalendarToolbar
         title="Content calendar"
@@ -240,6 +258,7 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
         ) : (
           <CalendarMobileAgenda
             posts={filteredPosts}
+            onOpenPost={handleOpenPost}
             emptyHint={
               <EmptyCalendarState
                 hasNoData={trulyEmpty}
