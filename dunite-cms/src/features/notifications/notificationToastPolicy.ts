@@ -7,6 +7,7 @@ const TOAST_TYPES = new Set<string>([
   'retry_failed',
   'scheduling_conflict',
   'media_processing_issue',
+  'media_library_removed',
   'role_change',
   'system_warning',
 ]);

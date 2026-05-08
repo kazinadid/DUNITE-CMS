@@ -63,6 +63,27 @@ export type ComposerMedia =
       height?: number;
       durationSeconds?: number;
       mediaProbe?: MediaProbeState;
+    }
+  | {
+      /** Reuse an existing uploaded object (library or post) — cloned to a new `media` row on save. */
+      kind:            'library_ref';
+      uid:             string;
+      sourceMediaId:   string;
+      /** Canonical `media.file_type` from the source row (e.g. `image`, `video`). */
+      storageFileType: string;
+      fileUrl:         string;
+      storagePath:     string;
+      mimeType:        string;
+      size:            number;
+      name:            string;
+      fileType:        FileKind;
+      thumbnailUrl:    string | null;
+      thumbnailPath:   string | null;
+      clientAttachmentMsgs?: ClientAttachmentMsg[];
+      width?:  number;
+      height?: number;
+      durationSeconds?: number;
+      mediaProbe?: MediaProbeState;
     };
 
 export type ValidationSeverity = 'error' | 'warning' | 'recommendation';

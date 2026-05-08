@@ -52,7 +52,12 @@ export function MediaSorter({ items, onReorder, onRemove, disabled }: MediaSorte
         const isImage               = m.fileType === 'image';
         const isVideo               = m.fileType === 'video';
         const Icon                   = FALLBACK_ICON[m.fileType];
-        const url                    = m.kind === 'pending' ? m.previewUrl : m.fileUrl;
+        const url =
+          m.kind === 'pending'
+            ? m.previewUrl
+            : m.kind === 'library_ref' && m.thumbnailUrl && m.fileType === 'image'
+              ? m.thumbnailUrl
+              : m.fileUrl;
         const dragging               = draggingUid === m.uid;
         const over                   = overUid === m.uid;
         const msgs                   = m.clientAttachmentMsgs ?? [];

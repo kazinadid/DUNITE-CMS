@@ -6,6 +6,7 @@ export type NotificationType =
   | 'retry_failed'
   | 'scheduling_conflict'
   | 'media_processing_issue'
+  | 'media_library_removed'
   | 'role_change'
   | 'token_expiration'
   | 'system_warning'

@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, CalendarClock, Loader2, Send } from 'lucide-react';
+import { ArrowLeft, CalendarClock, Images, Loader2, Send } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -30,6 +30,13 @@ import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import type { Post, PostMedia, WritablePostStatus } from '@/features/posts';
 import { syncPublishingPipeline } from '@/features/posts/services/postsService';
 import type { Role } from '@/features/auth';
+import {
+  cloneMediaRowToPost,
+  consumeComposerMediaReuse,
+  MediaPickerModal,
+  reusePayloadAsLibraryRows,
+  type LibraryMediaRow,
+} from '@/features/media-library';
 import { canPublishPost } from '@/lib/rbac';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -363,6 +370,7 @@ async function syncPostMedia({
   items,
   removed,
   onPendingPatch,
+  onLibraryCloned,
 }: {
   postId:  string;
   userId:  string;
@@ -370,6 +378,7 @@ async function syncPostMedia({
   removed: RemovedMedia[];
   /** Live feedback while files upload to Supabase. */
   onPendingPatch?: (uid: string, patch: PendingPatch) => void;
+  onLibraryCloned?: (clientUid: string, newDbId: string) => void;
 }) {
   for (const r of removed) {
     await deleteSavedMedia(r);
@@ -396,6 +405,23 @@ async function syncPostMedia({
         });
         throw err;
       }
+    } else if (item.kind === 'library_ref') {
+      const { id } = await cloneMediaRowToPost({
+        postId,
+        userId,
+        orderIndex: idx,
+        source: {
+          file_url:       item.fileUrl,
+          file_type:      item.storageFileType,
+          file_name:      item.name,
+          mime_type:      item.mimeType,
+          size:           item.size,
+          storage_path:   item.storagePath,
+          thumbnail_url:  item.thumbnailUrl,
+          thumbnail_path: item.thumbnailPath,
+        },
+      });
+      onLibraryCloned?.(item.uid, id);
     } else {
       await updateMediaOrder({ dbId: item.dbId, orderIndex: idx });
     }
@@ -415,6 +441,7 @@ interface SavePostWorkflowInput {
   media:         ComposerMedia[];
   removedMedia:  RemovedMedia[];
   onMediaPendingPatch?: (uid: string, patch: PendingPatch) => void;
+  onLibraryCloned?: (clientUid: string, newDbId: string) => void;
 }
 
 async function savePostWithAssets({
@@ -428,6 +455,7 @@ async function savePostWithAssets({
   media,
   removedMedia,
   onMediaPendingPatch,
+  onLibraryCloned,
 }: SavePostWorkflowInput): Promise<string> {
   let postId: string | null = null;
   let createdNewPost = false;
@@ -486,6 +514,7 @@ async function savePostWithAssets({
       items: media,
       removed: removedMedia,
       onPendingPatch: onMediaPendingPatch,
+      onLibraryCloned,
     });
   } catch (err) {
     if (createdNewPost && postId) {
@@ -660,6 +689,77 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
     return Math.min(...platforms.map((p) => PLATFORMS[p].maxMedia));
   }, [platforms]);
 
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const handleLibraryCloned = useCallback((clientUid: string, newDbId: string) => {
+    setItems((prev) =>
+      prev.map((m) =>
+        m.kind === 'library_ref' && m.uid === clientUid
+          ? {
+              kind: 'saved',
+              uid: newDbId,
+              dbId: newDbId,
+              fileUrl: m.fileUrl,
+              storagePath: m.storagePath,
+              mimeType: m.mimeType,
+              size: m.size,
+              name: m.name,
+              fileType: m.fileType,
+            }
+          : m,
+      ),
+    );
+  }, []);
+
+  const handleConfirmLibraryPick = useCallback(
+    (rows: LibraryMediaRow[]) => {
+      const cap = tightestMediaCap ?? 32;
+      setItems((prev) => {
+        const pickedIds = new Set(
+          prev
+            .filter((m): m is Extract<ComposerMedia, { kind: 'library_ref' }> => m.kind === 'library_ref')
+            .map((m) => m.sourceMediaId),
+        );
+        const next = [...prev];
+        for (const row of rows) {
+          if (next.length >= cap) break;
+          if (pickedIds.has(row.id)) continue;
+          if (row.file_type !== 'image' && row.file_type !== 'video') continue;
+          pickedIds.add(row.id);
+          const ft = fileKind(row.mime_type || 'application/octet-stream');
+          if (ft !== 'image' && ft !== 'video') continue;
+          next.push({
+            kind: 'library_ref',
+            uid: uid(),
+            sourceMediaId: row.id,
+            storageFileType: row.file_type,
+            fileUrl: row.file_url,
+            storagePath: row.storage_path,
+            mimeType: row.mime_type,
+            size: row.size ?? 0,
+            name: row.file_name,
+            fileType: ft,
+            thumbnailUrl: row.thumbnail_url,
+            thumbnailPath: row.thumbnail_path,
+          });
+        }
+        return next;
+      });
+      setPickerOpen(false);
+    },
+    [tightestMediaCap],
+  );
+
+  useEffect(() => {
+    if (!userId) return;
+    const payloads = consumeComposerMediaReuse();
+    if (payloads.length === 0) return;
+    const rows = reusePayloadAsLibraryRows(payloads);
+    queueMicrotask(() => {
+      handleConfirmLibraryPick(rows);
+    });
+  }, [handleConfirmLibraryPick, userId]);
+
   const validation = useMemo(() => {
     return validatePost(
       { content, platforms, media: items },
@@ -830,7 +930,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
       if (target.kind === 'pending') {
         probedAttachmentRef.current.delete(target.uid);
         URL.revokeObjectURL(target.previewUrl);
-      } else {
+      } else if (target.kind === 'saved') {
         // Defer deletion until save.
         setRemoved((r) => [...r, { dbId: target.dbId, storagePath: target.storagePath }]);
       }
@@ -933,6 +1033,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
           media: items,
           removedMedia: removed,
           onMediaPendingPatch: patchMediaPending,
+          onLibraryCloned: handleLibraryCloned,
         });
 
         await syncPublishingPipeline(postId);
@@ -959,6 +1060,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
         media: items,
         removedMedia: removed,
         onMediaPendingPatch: patchMediaPending,
+        onLibraryCloned: handleLibraryCloned,
       });
 
       await syncPublishingPipeline(postId);
@@ -1063,6 +1165,21 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
             </Section>
 
             <Section title="Media" hint="Drag to reorder. The first item is the cover.">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen(true)}
+                  disabled={
+                    loading
+                    || !userId
+                    || (typeof tightestMediaCap === 'number' && items.length >= tightestMediaCap)
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Images size={16} aria-hidden />
+                  From library
+                </button>
+              </div>
               <MediaUploader
                 ref={uploaderRef}
                 items={items}
@@ -1175,6 +1292,19 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
           </aside>
         </div>
       </div>
+
+      {userId && (
+        <MediaPickerModal
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          remainingSlots={
+            typeof tightestMediaCap === 'number'
+              ? Math.max(0, tightestMediaCap - items.length)
+              : 32
+          }
+          onConfirm={handleConfirmLibraryPick}
+        />
+      )}
     </>
   );
 }

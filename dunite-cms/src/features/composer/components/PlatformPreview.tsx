@@ -181,7 +181,12 @@ function MediaGallery({
   return (
     <div className={`grid gap-1 overflow-hidden ${cls} ${className}`}>
       {visible.map((m, i) => {
-        const url = m.kind === 'pending' ? m.previewUrl : m.fileUrl;
+        const url =
+          m.kind === 'pending'
+            ? m.previewUrl
+            : m.kind === 'library_ref' && m.thumbnailUrl && m.fileType === 'image'
+              ? m.thumbnailUrl
+              : m.fileUrl;
         const isVideo = m.fileType === 'video';
         const isImage = m.fileType === 'image';
         const isLast  = i === visible.length - 1 && overflow > 0;
