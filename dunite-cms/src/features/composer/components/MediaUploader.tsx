@@ -4,7 +4,7 @@ import { ImagePlus, UploadCloud } from 'lucide-react';
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 
 import { MediaSorter } from './MediaSorter';
-import type { ComposerMedia, FileKind } from '../types';
+import type { ComposerMedia } from '../types';
 
 export interface MediaUploaderHandle {
   /** Programmatically open the OS file picker. */
@@ -22,13 +22,7 @@ interface MediaUploaderProps {
   accept?:   string;
 }
 
-export function fileKind(mime: string): FileKind {
-  const top = mime.split('/')[0]?.toLowerCase();
-  if (top === 'image') return 'image';
-  if (top === 'video') return 'video';
-  if (top === 'audio') return 'audio';
-  return 'other';
-}
+export { fileKind } from '../lib/fileKind';
 
 /**
  * Drag & drop multi-file uploader. Presents a beautiful drop zone when

@@ -10,6 +10,9 @@ import {
   ComposerEditor,
   type ComposerEditorHandle,
   ComposerToolbar,
+  ComposerValidationPanel,
+  classifyAttachmentMessages,
+  dimensionProbeMessages,
   fileKind,
   insertAtCursor,
   MediaUploader,
@@ -17,9 +20,9 @@ import {
   PlatformPreview,
   PlatformSelector,
   PLATFORMS,
-  tightestLimit,
+  probeComposerPendingMedia,
   validatePost,
-  ValidationWarnings,
+  type ClientAttachmentMsg,
   type ComposerMedia,
   type PlatformId,
 } from '@/features/composer';
@@ -506,6 +509,17 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+function mergeAttachmentMsgs(
+  prev: ClientAttachmentMsg[] | undefined,
+  next: ClientAttachmentMsg[],
+): ClientAttachmentMsg[] {
+  const merged = [...(prev ?? [])];
+  for (const n of next) {
+    if (!merged.some((m) => m.level === n.level && m.message === n.message)) merged.push(n);
+  }
+  return merged;
+}
+
 function savedItemsFromPost(media: PostMedia[]): ComposerMedia[] {
   return media.map((m) => ({
     kind:        'saved',
@@ -526,6 +540,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
   const router = useRouter();
   const editorRef   = useRef<ComposerEditorHandle>(null);
   const uploaderRef = useRef<MediaUploaderHandle>(null);
+  const probedAttachmentRef = useRef<Set<string>>(new Set());
 
   const {
     dialog,
@@ -633,10 +648,6 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     return Math.min(...platforms.map((p) => PLATFORMS[p].maxMedia));
   }, [platforms]);
 
-  const overallLimit = useMemo(() => tightestLimit(platforms), [platforms]);
-  const charsLeft    = overallLimit === null ? null : overallLimit - content.length;
-  const overLimit    = charsLeft !== null && charsLeft < 0;
-
   const validation = useMemo(() => {
     return validatePost(
       { content, platforms, media: items },
@@ -650,13 +661,106 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     );
   }, [content, platforms, items, scheduleMode, scheduledAt]);
 
+  /** Draft saves stay permissive, but honor per-channel hard caps segment-by-segment for X threads. */
+  const draftBlockedByChars = useMemo(() => {
+    if (platforms.length === 0) return false;
+    return platforms.some((pid) => {
+      if (pid === 'twitter') {
+        const segments =
+          validation.twitterSegments.length > 0
+            ? validation.twitterSegments
+            : content.trim().length > 0
+              ? [content]
+              : [];
+        const lim = PLATFORMS.twitter.hardLimit;
+        return segments.some((segment) => segment.length > lim);
+      }
+      return content.length > PLATFORMS[pid].hardLimit;
+    });
+  }, [content, platforms, validation.twitterSegments]);
+
+  const mediaAccept = useMemo(() => {
+    const parts = ['image/*', 'video/*'];
+    if (platforms.includes('linkedin')) parts.push('application/pdf', '.pdf');
+    return parts.join(',');
+  }, [platforms]);
+
+  useEffect(() => {
+    items.forEach((m) => {
+      if (m.kind !== 'pending') return;
+      if (m.fileType !== 'image' && m.fileType !== 'video') return;
+      if (typeof m.width === 'number' && typeof m.height === 'number') return;
+      if (m.mediaProbe === 'loading' || m.mediaProbe === 'failed' || m.mediaProbe === 'ready')
+        return;
+      if (probedAttachmentRef.current.has(m.uid)) return;
+      probedAttachmentRef.current.add(m.uid);
+
+      setItems((cur) =>
+        cur.map((x) =>
+          x.uid === m.uid && x.kind === 'pending'
+            ? { ...x, mediaProbe: 'loading' as const }
+            : x,
+        ),
+      );
+
+      void probeComposerPendingMedia(m)
+        .then((meta) => {
+          if (!meta) {
+            setItems((cur) =>
+              cur.map((x) =>
+                x.uid === m.uid && x.kind === 'pending'
+                  ? { ...x, mediaProbe: 'failed' as const }
+                  : x,
+              ),
+            );
+            return;
+          }
+          const dimMsgs = dimensionProbeMessages({
+            platforms,
+            fileType: m.fileType,
+            width:    meta.width,
+            height:   meta.height,
+            durationSeconds: meta.durationSeconds,
+          });
+
+          setItems((cur) =>
+            cur.map((x) => {
+              if (x.uid !== m.uid || x.kind !== 'pending') return x;
+              return {
+                ...x,
+                width:      meta.width,
+                height:     meta.height,
+                ...(typeof meta.durationSeconds === 'number'
+                  ? { durationSeconds: meta.durationSeconds }
+                  : {}),
+                mediaProbe: 'ready' as const,
+                clientAttachmentMsgs:
+                  dimMsgs.length > 0
+                    ? mergeAttachmentMsgs(x.clientAttachmentMsgs, dimMsgs)
+                    : x.clientAttachmentMsgs,
+              };
+            }),
+          );
+        })
+        .catch(() => {
+          setItems((cur) =>
+            cur.map((x) =>
+              x.uid === m.uid && x.kind === 'pending'
+                ? { ...x, mediaProbe: 'failed' as const }
+                : x,
+            ),
+          );
+        });
+    });
+  }, [items, platforms]);
+
   const isScheduling   = scheduleMode === 'schedule';
   const primaryAction: SubmitAction = isScheduling ? 'schedule' : 'publish';
   const primaryLoading = loading && (loadingAction === 'publish' || loadingAction === 'schedule');
   const draftLoading   = loading && loadingAction === 'draft';
 
   const canPrimary = !loading && validation.canSubmit;
-  const canDraft   = !loading && !overLimit;
+  const canDraft = !loading && !draftBlockedByChars;
 
   const heading    = isEdit ? 'Edit Post' : 'Create Post';
   const subheading = isEdit
@@ -683,6 +787,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
       const next = [...prev];
       for (const file of files) {
         const mime = file.type || 'application/octet-stream';
+        const fk   = fileKind(mime);
+        const msgs = classifyAttachmentMessages(file, fk, platforms);
         next.push({
           kind:       'pending',
           uid:        uid(),
@@ -691,13 +797,15 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           mimeType:   mime,
           size:       file.size,
           name:       file.name,
-          fileType:   fileKind(mime),
+          fileType:   fk,
           status:     'idle',
+          ...(msgs.length > 0 ? { clientAttachmentMsgs: msgs } : {}),
+          ...(fk === 'image' || fk === 'video' ? { mediaProbe: 'idle' as const } : {}),
         });
       }
       return next;
     });
-  }, []);
+  }, [platforms]);
 
   const handleReorder = useCallback((next: ComposerMedia[]) => {
     setItems(next);
@@ -708,6 +816,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
       const target = prev.find((m) => m.uid === targetUid);
       if (!target) return prev;
       if (target.kind === 'pending') {
+        probedAttachmentRef.current.delete(target.uid);
         URL.revokeObjectURL(target.previewUrl);
       } else {
         // Defer deletion until save.
@@ -744,6 +853,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
   }
 
   function resetForm() {
+    probedAttachmentRef.current.clear();
     items.forEach((m) => {
       if (m.kind === 'pending') URL.revokeObjectURL(m.previewUrl);
     });
@@ -891,7 +1001,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
         </div>
 
         {/* Two-column layout: editor + previews */}
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_28rem]">
+        <div className="grid gap-6 xl:gap-10 lg:grid-cols-[minmax(0,1fr)_24rem]">
           {/* ── Editor column ────────────────────────────────────────────── */}
           <main className="space-y-5">
             <Section title="Platforms" hint="Select the channels for this post.">
@@ -914,7 +1024,15 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
                 onAttachMedia={handleAttachMedia}
                 disabled={loading}
                 trailing={
-                  <CharacterCounter content={content} platforms={platforms} />
+                  <CharacterCounter
+                    content={content}
+                    platforms={platforms}
+                    twitterThreadSegments={
+                      platforms.includes('twitter') && validation.twitterSegments.length > 0
+                        ? validation.twitterSegments
+                        : undefined
+                    }
+                  />
                 }
               />
             </Section>
@@ -928,6 +1046,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
                 onRemove={handleRemoveItem}
                 maxItems={tightestMediaCap}
                 disabled={loading}
+                accept={mediaAccept}
               />
             </Section>
 
@@ -978,7 +1097,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
             </Section>
 
             {/* Validation banner — also shown above actions on mobile */}
-            <ValidationWarnings issues={validation.issues} className="lg:hidden" />
+            <ComposerValidationPanel platforms={platforms} report={validation} className="lg:hidden" />
 
             {/* Actions */}
             <div className="sticky bottom-0 -mx-4 mt-2 flex flex-col gap-2 border-t border-gray-100 bg-white/80 px-4 py-3 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-end md:-mx-6 md:px-6">
@@ -1012,9 +1131,9 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           </main>
 
           {/* ── Preview column ──────────────────────────────────────────── */}
-          <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-            <ValidationWarnings issues={validation.issues} className="hidden lg:block" />
-            <div>
+          <aside className="space-y-4 lg:sticky lg:top-24 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:self-start lg:pr-1">
+            <ComposerValidationPanel platforms={platforms} report={validation} className="hidden lg:block" />
+            <div className="pb-2">
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
                 Live preview
               </h2>
@@ -1023,6 +1142,9 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
                 content={content}
                 media={items}
                 author={author}
+                twitterThreadSegments={
+                  platforms.includes('twitter') ? validation.twitterSegments : undefined
+                }
               />
             </div>
           </aside>

@@ -11,6 +11,15 @@ export type FileKind = 'image' | 'video' | 'audio' | 'other';
 
 export type MediaUploadStatus = 'idle' | 'uploading' | 'failed';
 
+/** Client-side validation note on one attachment tile (upload / dimensions). */
+export interface ClientAttachmentMsg {
+  level:   'error' | 'warning';
+  message: string;
+}
+
+/** State of optional async dimension probing for thumbnails. */
+export type MediaProbeState = 'idle' | 'loading' | 'ready' | 'failed';
+
 /**
  * A single media slot in the composer. Discriminated union covers two cases:
  *
@@ -32,6 +41,12 @@ export type ComposerMedia =
       status:      MediaUploadStatus;
       progress?:   number;          // 0..100, optional
       errorMessage?: string;
+      /** Local validation messages (MIME, caps, probes). Shown inline on tiles. */
+      clientAttachmentMsgs?: ClientAttachmentMsg[];
+      width?:  number;
+      height?: number;
+      durationSeconds?: number;
+      mediaProbe?: MediaProbeState;
     }
   | {
       kind:        'saved';
@@ -43,19 +58,37 @@ export type ComposerMedia =
       size:        number;
       name:        string;
       fileType:    FileKind;
+      clientAttachmentMsgs?: ClientAttachmentMsg[];
+      width?:  number;
+      height?: number;
+      durationSeconds?: number;
+      mediaProbe?: MediaProbeState;
     };
 
-export type ValidationSeverity = 'error' | 'warning';
+export type ValidationSeverity = 'error' | 'warning' | 'recommendation';
 
 export interface ValidationIssue {
   severity:  ValidationSeverity;
   /** `null` ⇒ applies to the whole post / no specific platform. */
   platform:  PlatformId | null;
   message:   string;
+  /** Optional grouping for tooling / QA. */
+  code?: string;
 }
 
 export interface ComposerPostShape {
   content:    string;
   platforms:  PlatformId[];
   media:      ComposerMedia[];
+}
+
+export interface ValidationReport {
+  issues:                 ValidationIssue[];
+  errors:                 ValidationIssue[];
+  warnings:               ValidationIssue[];
+  recommendations:        ValidationIssue[];
+  canSubmit:              boolean;
+  /** Populated whenever X/Twitter participates and trimmed content exists. */
+  twitterSegments:        string[];
+  twitterHasHardOverflow: boolean;
 }

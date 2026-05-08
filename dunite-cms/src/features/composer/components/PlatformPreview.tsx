@@ -8,6 +8,7 @@ import { Avatar } from '@/features/posts';
 import { PlatformIcon } from './PlatformIcon';
 import { tokenize } from '../lib/hashtags';
 import { PLATFORMS } from '../lib/platforms';
+import { splitIntoTweetThread } from '../lib/twitterThread';
 import type { ComposerMedia, PlatformId } from '../types';
 
 interface PreviewAuthor {
@@ -18,11 +19,13 @@ interface PreviewAuthor {
 }
 
 interface PlatformPreviewProps {
-  platforms: PlatformId[];
-  content:   string;
-  media:     ComposerMedia[];
-  author:    PreviewAuthor;
-  className?: string;
+  platforms:            PlatformId[];
+  content:              string;
+  media:                ComposerMedia[];
+  author:               PreviewAuthor;
+  /** Mirrors validation engine segmented copy for threaded X payloads. */
+  twitterThreadSegments?: string[];
+  className?:          string;
 }
 
 /**
@@ -34,6 +37,7 @@ export function PlatformPreview({
   content,
   media,
   author,
+  twitterThreadSegments,
   className = '',
 }: PlatformPreviewProps) {
   if (platforms.length === 0) {
@@ -58,6 +62,7 @@ export function PlatformPreview({
           content={content}
           media={media}
           author={author}
+          twitterThreadSegments={id === 'twitter' ? twitterThreadSegments : undefined}
         />
       ))}
     </div>
@@ -65,13 +70,20 @@ export function PlatformPreview({
 }
 
 interface PreviewCardProps {
-  platform: PlatformId;
-  content:  string;
-  media:    ComposerMedia[];
-  author:   PreviewAuthor;
+  platform:              PlatformId;
+  content:               string;
+  media:                 ComposerMedia[];
+  author:                PreviewAuthor;
+  twitterThreadSegments?: string[];
 }
 
-function PreviewCard({ platform, content, media, author }: PreviewCardProps) {
+function PreviewCard({
+  platform,
+  content,
+  media,
+  author,
+  twitterThreadSegments,
+}: PreviewCardProps) {
   const cfg = PLATFORMS[platform];
   const handle = useMemo(() => deriveHandle(author), [author]);
   const displayName = author.name?.trim() || author.email?.split('@')[0] || 'Your name';
@@ -96,7 +108,16 @@ function PreviewCard({ platform, content, media, author }: PreviewCardProps) {
       </div>
 
       {/* Body — platform-specific layouts */}
-      {platform === 'twitter'   && <TwitterBody   content={content} media={media} author={author} displayName={displayName} handle={handle} />}
+      {platform === 'twitter' && (
+        <TwitterBody
+          content={content}
+          media={media}
+          author={author}
+          displayName={displayName}
+          handle={handle}
+          threadSegments={twitterThreadSegments}
+        />
+      )}
       {platform === 'instagram' && <InstagramBody content={content} media={media} author={author} displayName={displayName} />}
       {platform === 'linkedin'  && <LinkedInBody  content={content} media={media} author={author} displayName={displayName} />}
       {platform === 'facebook'  && <FacebookBody  content={content} media={media} author={author} displayName={displayName} />}
@@ -213,70 +234,115 @@ function TwitterBody({
   author,
   displayName,
   handle,
+  threadSegments,
 }: {
-  content:     string;
-  media:       ComposerMedia[];
-  author:      PreviewAuthor;
-  displayName: string;
-  handle:      string;
+  content:           string;
+  media:             ComposerMedia[];
+  author:            PreviewAuthor;
+  displayName:       string;
+  handle:            string;
+  threadSegments?: string[];
 }) {
-  const len   = content.length;
   const limit = PLATFORMS.twitter.hardLimit;
-  const over  = len > limit;
-  const near  = len > PLATFORMS.twitter.softLimit && !over;
+  let segments =
+    threadSegments && threadSegments.length > 0
+      ? [...threadSegments]
+      : splitIntoTweetThread(content, limit).segments;
+  if (segments.length === 0 && content.trim().length > 0) segments = [content];
+
+  const threaded = segments.length > 1;
 
   return (
-    <div className="px-4 py-3">
-      <div className="flex gap-3">
-        <Avatar
-          seed={author.seed ?? author.email ?? displayName}
-          name={author.name}
-          email={author.email}
-          size="md"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 gap-y-0 text-[13px]">
-            <span className="font-semibold text-gray-900">{displayName}</span>
-            <span className="text-gray-500">{handle}</span>
-            <span className="text-gray-300">·</span>
-            <span className="text-gray-500">now</span>
-            <span
-              aria-hidden
-              title="Character count for X"
-              className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
-                over
-                  ? 'bg-red-100 text-red-700'
-                  : near
-                  ? 'bg-amber-50 text-amber-800'
-                  : 'bg-gray-100 text-gray-600'
-              }`}
+    <div className="bg-[#fafafa] px-2 py-4">
+      <div className={threaded ? 'space-y-0 rounded-2xl border border-gray-200 bg-white px-3 py-2 shadow-inner' : 'px-2'}>
+        {segments.map((seg, idx) => {
+          const len  = seg.length;
+          const over = len > limit;
+          const near = len > PLATFORMS.twitter.softLimit && !over;
+          return (
+            <div
+              key={idx}
+              className={[
+                idx > 0 ? 'border-t border-gray-100 pt-4' : '',
+                threaded ? '' : '',
+              ].join(' ')}
             >
-              {len}/{limit}
-            </span>
-            <button
-              type="button"
-              aria-hidden
-              tabIndex={-1}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-gray-400 sm:ml-0"
-            >
-              <MoreHorizontal size={14} />
-            </button>
-          </div>
-          <div className="mt-1 whitespace-pre-wrap text-[15px] leading-snug text-gray-900">
-            <FormattedContent content={content} fallback="Your tweet appears here." />
-          </div>
-          {media.length > 0 && (
-            <div className="mt-3">
-              <MediaGallery media={media} rounded="rounded-2xl" />
+              <div className="flex gap-3">
+                {idx === 0 ? (
+                  <Avatar
+                    seed={author.seed ?? author.email ?? displayName}
+                    name={author.name}
+                    email={author.email}
+                    size="md"
+                  />
+                ) : (
+                  <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-start gap-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                    <span className="tabular-nums text-gray-500">{idx + 1}</span>
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5 gap-y-0 text-[13px]">
+                    {idx === 0 && (
+                      <>
+                        <span className="font-semibold text-gray-900">{displayName}</span>
+                        <span className="text-gray-500">{handle}</span>
+                        <span className="text-gray-300">·</span>
+                      </>
+                    )}
+                    {idx > 0 && (
+                      <>
+                        <span className="text-[13px] font-semibold text-gray-900">{displayName}</span>
+                        <span className="rounded bg-gray-100 px-2 py-[1px] text-[10px] font-semibold text-gray-500">
+                          Tweet {idx + 1}/{segments.length}
+                        </span>
+                      </>
+                    )}
+                    <span className="text-gray-500">now</span>
+                    <span
+                      aria-hidden
+                      className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
+                        over
+                          ? 'bg-red-100 text-red-700'
+                          : near
+                          ? 'bg-amber-50 text-amber-800'
+                          : 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {len}/{limit}
+                    </span>
+                    <button
+                      type="button"
+                      aria-hidden
+                      tabIndex={-1}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-gray-400 sm:ml-0"
+                    >
+                      <MoreHorizontal size={14} />
+                    </button>
+                  </div>
+                  <div className="mt-1 whitespace-pre-wrap text-[15px] leading-snug text-[#0F1419]">
+                    <FormattedContent content={seg} fallback="Tweet copy appears here." />
+                  </div>
+                  {idx === 0 && media.length > 0 && (
+                    <div className="mt-3">
+                      <MediaGallery media={media} rounded="rounded-2xl" />
+                    </div>
+                  )}
+                  {idx === segments.length - 1 && (
+                    <div className="mt-3 flex items-center justify-between text-gray-400">
+                      <PreviewAction icon={MessageCircle} />
+                      <PreviewAction icon={Repeat2} />
+                      <PreviewAction icon={Heart} />
+                      <PreviewAction icon={Share2} />
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          )}
-          <div className="mt-3 flex items-center justify-between text-gray-500">
-            <PreviewAction icon={MessageCircle} />
-            <PreviewAction icon={Repeat2} />
-            <PreviewAction icon={Heart} />
-            <PreviewAction icon={Share2} />
-          </div>
-        </div>
+          );
+        })}
+        {segments.length === 0 && (
+          <p className="px-6 py-6 text-center text-sm text-gray-400">Compose your post to populate the X preview.</p>
+        )}
       </div>
     </div>
   );
@@ -296,8 +362,10 @@ function InstagramBody({
   displayName: string;
 }) {
   return (
-    <div>
-      <div className="flex items-center gap-2 px-3 py-2.5">
+    <div className="relative bg-gradient-to-b from-[#fbcfe8]/35 via-transparent to-transparent px-2 py-4">
+      <div className="mx-auto max-w-[318px] overflow-hidden rounded-[2.85rem] border-[12px] border-gray-950 bg-black shadow-2xl ring-4 ring-black/55">
+        <div className="overflow-hidden rounded-[2rem] bg-white">
+          <div className="flex items-center gap-2 px-3 py-2.5">
         <Avatar
           seed={author.seed ?? author.email ?? displayName}
           name={author.name}
@@ -352,6 +420,8 @@ function InstagramBody({
           <FormattedContent content={content} fallback="Caption goes here. Tag friends, add hashtags, etc." />
         </span>
       </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -370,7 +440,7 @@ function LinkedInBody({
   displayName: string;
 }) {
   return (
-    <div className="px-4 py-3.5">
+    <div className="border-l-[5px] border-[#0A66C2] bg-gradient-to-r from-[#f3f9ff]/80 via-white to-white px-4 py-3.5">
       <div className="flex items-center gap-2.5">
         <Avatar
           seed={author.seed ?? author.email ?? displayName}
@@ -426,42 +496,48 @@ function FacebookBody({
   displayName: string;
 }) {
   return (
-    <div className="px-4 py-3.5">
-      <div className="flex items-center gap-2.5">
-        <Avatar
-          seed={author.seed ?? author.email ?? displayName}
-          name={author.name}
-          email={author.email}
-          size="md"
-        />
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-gray-900">{displayName}</p>
-          <p className="text-[11px] text-gray-500">Just now · Public</p>
+    <div className="relative overflow-hidden bg-white">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_82%_-20%,rgba(24,119,242,0.22),transparent_62%)]"
+      />
+      <div className="relative px-4 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <Avatar
+            seed={author.seed ?? author.email ?? displayName}
+            name={author.name}
+            email={author.email}
+            size="md"
+          />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-gray-900">{displayName}</p>
+            <p className="text-[11px] text-gray-500">Just now · Public</p>
+          </div>
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full text-gray-400"
+          >
+            <MoreHorizontal size={14} />
+          </button>
         </div>
-        <button
-          type="button"
-          aria-hidden
-          tabIndex={-1}
-          className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full text-gray-400"
-        >
-          <MoreHorizontal size={14} />
-        </button>
-      </div>
 
-      <div className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-gray-900">
-        <FormattedContent content={content} fallback="Tell your friends what's on your mind…" />
-      </div>
-
-      {media.length > 0 && (
-        <div className="mt-3">
-          <MediaGallery media={media} rounded="rounded-lg" />
+        <div className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-gray-900">
+          <FormattedContent content={content} fallback="Tell your friends what's on your mind…" />
         </div>
-      )}
 
-      <div className="mt-3 flex items-center justify-around border-t border-gray-100 pt-2.5 text-gray-600">
-        <PreviewAction icon={ThumbsUp} label="Like" />
-        <PreviewAction icon={MessageCircle} label="Comment" />
-        <PreviewAction icon={Share2} label="Share" />
+        {media.length > 0 && (
+          <div className="mt-3">
+            <MediaGallery media={media} rounded="rounded-lg" />
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center justify-around border-t border-gray-100 pt-2.5 text-gray-600">
+          <PreviewAction icon={ThumbsUp} label="Like" />
+          <PreviewAction icon={MessageCircle} label="Comment" />
+          <PreviewAction icon={Share2} label="Share" />
+        </div>
       </div>
     </div>
   );

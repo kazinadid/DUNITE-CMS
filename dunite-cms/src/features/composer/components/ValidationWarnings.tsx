@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, ShieldAlert, Sparkles } from 'lucide-react';
 
 import { PlatformIcon } from './PlatformIcon';
 import { PLATFORMS } from '../lib/platforms';
@@ -12,14 +12,14 @@ interface ValidationWarningsProps {
 }
 
 /**
- * Inline guidance banner shown above the action bar. Errors block publish;
- * warnings are advisory. Mirrors the per-platform validation engine.
+ * Inline validation banner stack; errors publish-block, warnings/recs advisory.
  */
 export function ValidationWarnings({ issues, className = '' }: ValidationWarningsProps) {
-  if (issues.length === 0) return null;
-
   const errors   = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
+  const recs     = issues.filter((i) => i.severity === 'recommendation');
+
+  if (!errors.length && !warnings.length && !recs.length) return null;
 
   return (
     <div className={`space-y-2 ${className}`}>
@@ -39,12 +39,20 @@ export function ValidationWarnings({ issues, className = '' }: ValidationWarning
           issues={warnings}
         />
       )}
+      {recs.length > 0 && (
+        <Group
+          tone="recommendation"
+          icon={Sparkles}
+          title={`${recs.length} publishing ${recs.length === 1 ? 'hint' : 'hints'}`}
+          issues={recs}
+        />
+      )}
     </div>
   );
 }
 
 interface GroupProps {
-  tone:   'error' | 'warning';
+  tone:   'error' | 'warning' | 'recommendation';
   title:  string;
   icon:   React.ComponentType<{ size?: number; 'aria-hidden'?: boolean; className?: string }>;
   issues: ValidationIssue[];
@@ -60,6 +68,11 @@ const TONES: Record<GroupProps['tone'], { wrap: string; pill: string; iconWrap: 
     wrap:     'border-amber-200/80 bg-amber-50/70',
     pill:     'bg-white text-amber-700 ring-amber-200',
     iconWrap: 'bg-amber-100 text-amber-700',
+  },
+  recommendation: {
+    wrap:     'border-sky-200/80 bg-sky-50/60',
+    pill:     'bg-white text-sky-700 ring-sky-200',
+    iconWrap: 'bg-sky-100 text-sky-700',
   },
 };
 
