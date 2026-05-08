@@ -72,7 +72,30 @@ export function getDefaultMediaFilter(): MediaListFilter {
     libraryScope: 'library',
     sort:         'newest',
     uploader:     { kind: 'all' },
+    uploadedFrom: null,
+    uploadedTo:   null,
   };
+}
+
+function sortColumnAndDirection(
+  sort: MediaListFilter['sort'],
+): { col: 'created_at' | 'file_name' | 'size'; ascending: boolean } {
+  switch (sort) {
+    case 'oldest':
+      return { col: 'created_at', ascending: true };
+    case 'name_asc':
+      return { col: 'file_name', ascending: true };
+    case 'name_desc':
+      return { col: 'file_name', ascending: false };
+    case 'size_asc':
+      return { col: 'size', ascending: true };
+    case 'size_desc':
+      return { col: 'size', ascending: false };
+    case 'recent_used':
+    case 'newest':
+    default:
+      return { col: 'created_at', ascending: false };
+  }
 }
 
 export async function listUserMediaPage(opts: {
@@ -120,8 +143,18 @@ export async function listUserMediaPage(opts: {
     query = query.eq('category_id', cat.id);
   }
 
-  const ascending = filter.sort === 'oldest';
-  query = query.order('created_at', { ascending }).range(from, to);
+  if (filter.uploadedFrom) {
+    query = query.gte('created_at', `${filter.uploadedFrom}T00:00:00.000Z`);
+  }
+  if (filter.uploadedTo) {
+    const end = filter.uploadedTo.includes('T')
+      ? filter.uploadedTo
+      : `${filter.uploadedTo}T23:59:59.999Z`;
+    query = query.lte('created_at', end);
+  }
+
+  const { col, ascending } = sortColumnAndDirection(filter.sort);
+  query = query.order(col, { ascending }).range(from, to);
 
   const { data, error, count } = await query;
   if (error) throw error;

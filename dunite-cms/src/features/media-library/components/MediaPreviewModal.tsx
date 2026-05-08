@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
-import { Copy, Download, Image as ImageIcon, PenLine, Trash2 } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { Copy, Download, Image as ImageIcon, Minus, PenLine, Plus, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -72,6 +73,53 @@ export interface MediaPreviewModalProps {
   onMoveCategory: (id: string, categoryId: string | null) => void;
 }
 
+function ImagePreviewZoom({ row }: { row: LibraryMediaRow }) {
+  const [zoom, setZoom] = useState(1);
+
+  return (
+    <>
+      <div className="sticky top-0 z-[1] flex w-full flex-wrap items-center justify-center gap-1 border-b bg-muted/90 p-2 backdrop-blur-sm">
+        <span className="mr-auto text-[10px] font-medium text-muted-foreground">Zoom</span>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="outline"
+          aria-label="Zoom out"
+          disabled={zoom <= 1}
+          onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
+        >
+          <Minus className="size-3" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="outline"
+          aria-label="Zoom in"
+          disabled={zoom >= 3}
+          onClick={() => setZoom((z) => Math.min(3, z + 0.25))}
+        >
+          <Plus className="size-3" aria-hidden />
+        </Button>
+        <Button type="button" size="xs" variant="outline" onClick={() => setZoom(1)}>
+          Reset
+        </Button>
+        <span className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+          {row.file_type}
+        </span>
+      </div>
+      <div className="flex min-h-[200px] w-full flex-1 items-center justify-center overflow-auto p-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={row.file_url}
+          alt=""
+          className="max-h-[min(70vh,560px)] max-w-full object-contain"
+          style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+        />
+      </div>
+    </>
+  );
+}
+
 export function MediaPreviewModal({
   open,
   onOpenChange,
@@ -83,14 +131,10 @@ export function MediaPreviewModal({
   onDelete,
   onMoveCategory,
 }: MediaPreviewModalProps) {
+  const router = useRouter();
+
   const canEditRow = row ? canModifyLibraryRow(role, row, currentUserId) : false;
   const canDelete = row ? canDeleteLibraryRow(role, row, currentUserId) : false;
-
-  const primaryUrl = row
-    ? row.file_type === 'image' || (row.mime_type ?? '').startsWith('image/')
-      ? row.file_url
-      : row.file_url
-    : '';
 
   const copyUrl = useCallback(async () => {
     if (!row?.file_url) return;
@@ -108,7 +152,7 @@ export function MediaPreviewModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] w-[min(96vw,900px)] max-w-none overflow-y-auto gap-0 p-0 sm:max-w-[900px]">
+      <DialogContent className="z-[100] max-h-[92vh] w-[min(96vw,900px)] max-w-none overflow-y-auto gap-0 p-0 sm:max-w-[900px]">
         <DialogHeader className="border-b px-4 py-3 sm:px-5">
           <DialogTitle className="line-clamp-2 pr-8">
             {row?.file_name ?? 'Preview'}
@@ -121,27 +165,24 @@ export function MediaPreviewModal({
         {row && (
           <>
             <div className="grid gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_16rem] sm:p-5">
-              <div className="relative flex min-h-[200px] items-center justify-center overflow-hidden rounded-xl border bg-muted">
+              <div className="relative flex min-h-[200px] flex-col items-center justify-center overflow-auto rounded-xl border bg-muted">
                 {row.file_type === 'video' ? (
                   <video
                     src={row.file_url}
                     controls
                     playsInline
-                    className="max-h-[min(60vh,480px)] w-full object-contain"
+                    className="max-h-[min(70vh,520px)] w-full object-contain"
                   />
-                ) : primaryUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={(row.thumbnail_url && row.file_type === 'image') ? row.thumbnail_url : row.file_url}
-                    alt=""
-                    className="max-h-[min(60vh,520px)] w-full object-contain"
-                  />
+                ) : row.file_url ? (
+                  <ImagePreviewZoom key={row.id} row={row} />
                 ) : (
                   <ImageIcon className="size-16 text-muted-foreground opacity-40" aria-hidden />
                 )}
-                <span className="absolute top-3 left-3 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase">
-                  {row.file_type}
-                </span>
+                {row.file_type === 'video' ? (
+                  <span className="pointer-events-none absolute top-3 right-3 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase">
+                    {row.file_type}
+                  </span>
+                ) : null}
               </div>
 
               <div className="space-y-4 text-sm">
@@ -170,6 +211,21 @@ export function MediaPreviewModal({
                     <dt className="text-muted-foreground">Uses</dt>
                     <dd className="text-right text-muted-foreground">
                       Pending analytics
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-muted-foreground">Scope</dt>
+                    <dd className="text-right">
+                      {row.is_library ? 'Library' : 'Post attachment'}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="shrink-0 text-muted-foreground">Storage path</dt>
+                    <dd
+                      className="max-w-[min(20rem,55vw)] break-all text-right font-mono text-[10px] leading-snug text-foreground/90"
+                      title={row.storage_path}
+                    >
+                      {row.storage_path}
                     </dd>
                   </div>
                   <div className="flex justify-between gap-2">
@@ -225,7 +281,7 @@ export function MediaPreviewModal({
                   onClick={() => {
                     enqueueComposerMediaReuse([reusePayload(row)]);
                     onOpenChange(false);
-                    window.location.assign('/dashboard/posts/compose');
+                    router.push('/dashboard/posts/compose');
                   }}
                 >
                   <PenLine className="size-3.5" aria-hidden />

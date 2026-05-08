@@ -1,6 +1,14 @@
 import type { FileKind } from '@/features/composer';
 
-export type MediaSort = 'newest' | 'oldest';
+export type MediaSort =
+  | 'newest'
+  | 'oldest'
+  | 'name_asc'
+  | 'name_desc'
+  | 'size_desc'
+  | 'size_asc'
+  /** Placeholder — same ordering as newest until usage analytics ship */
+  | 'recent_used';
 
 export type MediaUploaderFilter =
   | { kind: 'all' }
@@ -14,6 +22,10 @@ export type MediaListFilter = {
   libraryScope:  'all' | 'library' | 'post';
   sort:          MediaSort;
   uploader:      MediaUploaderFilter;
+  /** Inclusive start day `YYYY-MM-DD`, UTC interpretation in queries */
+  uploadedFrom:  string | null;
+  /** Inclusive end day `YYYY-MM-DD` */
+  uploadedTo:    string | null;
 };
 
 export interface MediaCategory {

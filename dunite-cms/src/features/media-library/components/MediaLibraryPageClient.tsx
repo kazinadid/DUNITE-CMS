@@ -41,12 +41,15 @@ import type {
   LibraryMediaRow,
   MediaCategory,
   MediaListFilter,
+  MediaSort,
   MediaUploaderFilter,
   MediaUploaderOption,
 } from '../types';
 import {
   bulkCanSelectLibraryRow,
   canBulkMediaActions,
+  canDeleteLibraryRow,
+  canModifyLibraryRow,
   canPickTeamUploader,
   canReuseInComposer,
 } from '../lib/mediaPermissions';
@@ -86,6 +89,16 @@ function parseOwnerParam(raw: string | null, role: Role): MediaUploaderFilter | 
   return null;
 }
 
+const URL_SORT_VALUES: MediaSort[] = [
+  'newest',
+  'oldest',
+  'name_asc',
+  'name_desc',
+  'size_desc',
+  'size_asc',
+  'recent_used',
+];
+
 function SkeletonGrid() {
   return (
     <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -119,7 +132,6 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
   const [categories, setCategories] = useState<MediaCategory[]>([]);
   const [teamUploaders, setTeamUploaders] = useState<MediaUploaderOption[]>([]);
   const [previewRow, setPreviewRow] = useState<LibraryMediaRow | null>(null);
-  const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set<string>());
   const [bulkBusy, setBulkBusy]       = useState(false);
   const [refreshing, setRefreshing]   = useState(false);
@@ -157,6 +169,12 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
     }
     return null;
   }, [allowBulkChrome, allowWrites, viewerRole, selectedIds, rows, role, userId]);
+
+  const selectableOnPage = useMemo(
+    () =>
+      rows.filter((r) => bulkCanSelectLibraryRow(role, r, userId)).map((r) => r.id),
+    [rows, role, userId],
+  );
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(searchInput), 350);
@@ -203,6 +221,8 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
     const catRaw      = searchParams.get('cat');
     const scopeRaw    = searchParams.get('scope');
     const sortRaw     = searchParams.get('sort');
+    const fromRaw     = searchParams.get('from');
+    const toRaw       = searchParams.get('to');
 
     queueMicrotask(() => {
       setFilter((f) => ({
@@ -213,7 +233,11 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
         ...(scopeRaw === 'library' || scopeRaw === 'post' || scopeRaw === 'all'
           ? { libraryScope: scopeRaw }
           : {}),
-        ...(sortRaw === 'newest' || sortRaw === 'oldest' ? { sort: sortRaw } : {}),
+        ...(sortRaw && URL_SORT_VALUES.includes(sortRaw as MediaSort)
+          ? { sort: sortRaw as MediaSort }
+          : {}),
+        ...(fromRaw ? { uploadedFrom: fromRaw } : {}),
+        ...(toRaw ? { uploadedTo: toRaw } : {}),
       }));
       if (qRaw) {
         setSearchInput(qRaw);
@@ -377,6 +401,28 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
     }
   }, [bulkBarrierMessage, bulkBusy, load, selectedIds]);
 
+  const handleCopyUrl = useCallback(async (row: LibraryMediaRow) => {
+    try {
+      await navigator.clipboard.writeText(row.file_url);
+    } catch {
+      setError('Could not copy URL to clipboard.');
+    }
+  }, []);
+
+  const handleSelectAllPage = useCallback(() => {
+    setSelectedIds(new Set(selectableOnPage));
+  }, [selectableOnPage]);
+
+  const handleBulkReuseComposer = useCallback(() => {
+    if (bulkBarrierMessage || viewerRole) return;
+    const payloads = rows
+      .filter((r) => selectedIds.has(r.id) && r.is_library)
+      .map(reusePayload);
+    if (payloads.length === 0) return;
+    enqueueComposerMediaReuse(payloads);
+    router.push('/dashboard/posts/compose');
+  }, [bulkBarrierMessage, viewerRole, rows, selectedIds, router]);
+
   useEffect(() => {
     const params = new URLSearchParams();
     if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
@@ -386,6 +432,8 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
     if (filter.categorySlug !== 'all') params.set('cat', filter.categorySlug);
     if (filter.libraryScope !== 'library') params.set('scope', filter.libraryScope);
     if (filter.sort !== 'newest') params.set('sort', filter.sort);
+    if (filter.uploadedFrom) params.set('from', filter.uploadedFrom);
+    if (filter.uploadedTo) params.set('to', filter.uploadedTo);
     if (page > 1) params.set('page', String(page));
     if (view !== 'grid') params.set('view', view);
     const qs = params.toString();
@@ -399,6 +447,8 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
     filter.libraryScope,
     filter.sort,
     filter.uploader,
+    filter.uploadedFrom,
+    filter.uploadedTo,
     page,
     view,
   ]);
@@ -444,6 +494,9 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
           onClear={() => setSelectedIds(new Set())}
           onMoveFolder={(cid) => void handleBulkMove(cid)}
           onDelete={() => void handleBulkDelete()}
+          onReuseDraft={
+            canReuseInComposer(role) && !viewerRole ? () => void handleBulkReuseComposer() : undefined
+          }
         />
       )}
 
@@ -523,7 +576,7 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
         )}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm">
         <div className="grid flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <div className="relative sm:col-span-2">
             <Search
@@ -612,6 +665,11 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
             >
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
+              <option value="name_asc">Name A–Z</option>
+              <option value="name_desc">Name Z–A</option>
+              <option value="size_desc">Largest first</option>
+              <option value="size_asc">Smallest first</option>
+              <option value="recent_used">Recently used (soon)</option>
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
@@ -642,7 +700,65 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
             </select>
           </label>
         </div>
-        <div className="flex gap-1 rounded-lg border p-0.5">
+
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+            Uploaded from
+            <Input
+              type="date"
+              value={filter.uploadedFrom ?? ''}
+              onChange={(e) => {
+                const v = e.target.value || null;
+                setFilter((f) => ({ ...f, uploadedFrom: v }));
+                setPage(1);
+              }}
+              className="h-9"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+            Uploaded to
+            <Input
+              type="date"
+              value={filter.uploadedTo ?? ''}
+              onChange={(e) => {
+                const v = e.target.value || null;
+                setFilter((f) => ({ ...f, uploadedTo: v }));
+                setPage(1);
+              }}
+              className="h-9"
+            />
+          </label>
+          <div className="flex items-end sm:col-span-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 text-xs text-muted-foreground"
+              onClick={() => {
+                setFilter((f) => ({ ...f, uploadedFrom: null, uploadedTo: null }));
+                setPage(1);
+              }}
+            >
+              Clear dates
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          {allowBulkChrome && filter.libraryScope === 'library' && rows.length > 0 && !loading ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={selectableOnPage.length === 0}
+              onClick={handleSelectAllPage}
+            >
+              Select page ({selectableOnPage.length})
+            </Button>
+          ) : (
+            <span className="hidden sm:block" />
+          )}
+          <div className="flex gap-1 rounded-lg border p-0.5 sm:ml-auto">
           <button
             type="button"
             onClick={() => setView('grid')}
@@ -668,11 +784,15 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
             List
           </button>
         </div>
+        </div>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {error}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <span className="min-w-0 flex-1">{error}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => void reloadList()}>
+            Retry
+          </Button>
         </div>
       )}
 
@@ -687,6 +807,11 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
               Upload assets or widen your filters — post attachments may be under “Post attachments”.
             </p>
           </div>
+          {allowUpload ? (
+            <Button type="button" size="sm" onClick={() => fileRef.current?.click()}>
+              Upload to library
+            </Button>
+          ) : null}
         </div>
       ) : (
         <ul
@@ -701,10 +826,15 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
               allowBulkChrome &&
               filter.libraryScope === 'library' &&
               bulkCanSelectLibraryRow(role, row, userId);
+            const showMove =
+              canModifyLibraryRow(role, row, userId) && row.is_library && !viewerRole;
+            const showDelete =
+              canDeleteLibraryRow(role, row, userId) && row.is_library && !viewerRole;
             return (
               <MediaLibraryAssetCard
                 key={row.id}
                 row={row}
+                categories={categories}
                 view={view}
                 bulkEnabled={allowBulkChrome && filter.libraryScope === 'library'}
                 selected={selectedIds.has(row.id)}
@@ -721,10 +851,13 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
                 }}
                 onOpenPreview={() => {
                   setPreviewRow(row);
-                  setOpenMenuRowId(null);
                 }}
-                menuOpen={openMenuRowId === row.id}
-                onMenuOpenChange={(open) => setOpenMenuRowId(open ? row.id : null)}
+                onCopyUrl={() => void handleCopyUrl(row)}
+                onMoveToCategory={(categoryId) => void handleMove(row.id, categoryId)}
+                onDelete={() => void handleDelete(row.id)}
+                showComposerAction={canReuseInComposer(role) && row.is_library}
+                showMoveAction={showMove}
+                showDeleteAction={showDelete}
                 onUseInComposer={
                   canReuseInComposer(role) && row.is_library
                     ? () => {
@@ -768,10 +901,7 @@ export function MediaLibraryPageClient({ userId, role }: MediaLibraryPageClientP
       <MediaPreviewModal
         open={previewRow !== null}
         onOpenChange={(open) => {
-          if (!open) {
-            setPreviewRow(null);
-            setOpenMenuRowId(null);
-          }
+          if (!open) setPreviewRow(null);
         }}
         row={previewRow}
         categories={categories}
