@@ -30,6 +30,7 @@ import {
   isoToDatetimeLocalInput,
 } from '@/features/calendar/lib/formatTime';
 import { useFeedback } from '@/features/feedback';
+import { PostAuditSection } from '@/features/activity';
 import { DeleteDialog } from './DeleteDialog';
 import { MediaThumbnail } from './MediaThumbnail';
 import { PlatformBadge } from './PlatformBadge';
@@ -496,6 +497,19 @@ export function PostDetailModal({
                     </div>
                   </section>
                 )}
+
+                <section>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    Activity &amp; audit
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+                    Append-only history for this post — scheduling, edits, media, and publishing
+                    infrastructure events.
+                  </p>
+                  <div className="mt-2">
+                    <PostAuditSection postId={draft.id} />
+                  </div>
+                </section>
 
                 <section>
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">

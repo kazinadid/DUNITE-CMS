@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Lock } from 'lucide-react';
+import { RecentActivityWidget } from '@/features/activity';
 import { supabase } from '@/lib/supabaseClient';
 import type { Role } from '@/features/auth';
 
@@ -65,10 +66,15 @@ export default function DashboardPage() {
       )}
 
       {/* ── Stat cards ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard label="Total posts"     value="0" />
-        <StatCard label="Scheduled posts" value="0" tone="warning" />
-        <StatCard label="Failed posts"    value="0" tone="danger"  />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-2">
+          <StatCard label="Total posts"     value="0" />
+          <StatCard label="Scheduled posts" value="0" tone="warning" />
+          <StatCard label="Failed posts"    value="0" tone="danger"  />
+        </div>
+        <div className="lg:col-span-1">
+          <RecentActivityWidget />
+        </div>
       </div>
 
       {/* ── Account card ────────────────────────────────────────── */}

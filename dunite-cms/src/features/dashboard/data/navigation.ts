@@ -1,5 +1,6 @@
 import {
   Calendar,
+  History,
   Image as ImageIcon,
   LayoutDashboard,
   Settings,
@@ -20,6 +21,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard',          icon: LayoutDashboard },
+  { label: 'Activity',  href: '/dashboard/activity', icon: History },
   { label: 'Posts',     href: '/dashboard/posts',    icon: FileText },
   { label: 'Calendar',  href: '/dashboard/calendar', icon: Calendar },
   { label: 'Media',     href: '/dashboard/media',    icon: ImageIcon },
