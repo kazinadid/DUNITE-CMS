@@ -38,6 +38,161 @@ interface ComposeFormProps {
   initialPost?: Post;
 }
 
+// ── Error helpers ────────────────────────────────────────────────────────────
+//
+// Supabase / Postgrest errors are notoriously hard to log:
+//   1. `Error.message` is non-enumerable, so `JSON.stringify(err)` returns `{}`.
+//   2. Some failure modes (missing tables, network glitches, schema cache
+//      misses) return a literally-empty object as the `error` field.
+//   3. Next.js Turbopack's error overlay collapses object args to `{}`.
+//
+// The helpers below defeat all three problems: we walk the prototype chain to
+// pick up inherited fields, format a flat single-string summary so overlays
+// show it verbatim, and produce a friendly "run the migrations" message when
+// the error is empty (the most common dev-time cause).
+
+interface NormalisedError {
+  message?: string;
+  code?:    string;
+  details?: string;
+  hint?:    string;
+  status?:  number;
+  name?:    string;
+  /** Every own + inherited string/number/boolean property on the original. */
+  extra:    Record<string, unknown>;
+  /** `err.constructor.name` — useful when the error is a custom class. */
+  className?: string;
+  /** True when we couldn't extract any useful field. */
+  isEmpty: boolean;
+}
+
+function serializeAnyError(err: unknown): NormalisedError {
+  const out: NormalisedError = { extra: {}, isEmpty: false };
+
+  if (err === null || err === undefined) {
+    out.message = String(err);
+    out.isEmpty = true;
+    return out;
+  }
+  if (typeof err !== 'object') {
+    out.message = String(err);
+    return out;
+  }
+
+  // Walk the prototype chain so we catch non-enumerable Error.* properties.
+  const seen   = new Set<string>();
+  const SKIP   = new Set(['constructor', 'toString', 'toJSON', '__proto__']);
+  let current: object | null = err;
+  while (current && current !== Object.prototype) {
+    for (const key of Object.getOwnPropertyNames(current)) {
+      if (SKIP.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      try {
+        const value = (err as Record<string, unknown>)[key];
+        if (value === undefined || typeof value === 'function') continue;
+
+        // Pull the well-known fields out of `extra` for direct access.
+        if (key === 'message' && typeof value === 'string') out.message = value;
+        else if (key === 'code'    && typeof value === 'string') out.code    = value;
+        else if (key === 'details' && typeof value === 'string') out.details = value;
+        else if (key === 'hint'    && typeof value === 'string') out.hint    = value;
+        else if (key === 'status'  && typeof value === 'number') out.status  = value;
+        else if (key === 'name'    && typeof value === 'string') out.name    = value;
+        else                                                     out.extra[key] = value;
+      } catch {
+        /* ignore accessor errors */
+      }
+    }
+    current = Object.getPrototypeOf(current);
+  }
+
+  out.className = (err as { constructor?: { name?: string } }).constructor?.name;
+
+  out.isEmpty =
+    !out.message &&
+    !out.code &&
+    !out.details &&
+    !out.hint &&
+    out.status === undefined &&
+    Object.keys(out.extra).length === 0;
+
+  return out;
+}
+
+/** Build a flat human-readable summary string. */
+function formatErrorSummary(n: NormalisedError): string {
+  const parts: string[] = [];
+  if (n.message) parts.push(n.message);
+  if (n.code)    parts.push(`code=${n.code}`);
+  if (n.status)  parts.push(`status=${n.status}`);
+  if (n.details) parts.push(`details=${n.details}`);
+  if (n.hint)    parts.push(`hint=${n.hint}`);
+  if (parts.length === 0) {
+    if (n.className) parts.push(`<${n.className} with no readable fields>`);
+    else             parts.push('<empty error>');
+  }
+  return parts.join(' | ');
+}
+
+function describeError(step: string, err: unknown): string {
+  if (err instanceof StepError) return err.userMessage;
+  const n = serializeAnyError(err);
+
+  // Friendly hints for the most common deployment problems.
+  if (n.code === '42P01' || (n.message && n.message.includes('does not exist'))) {
+    return (
+      `${step} failed: a required database table is missing. ` +
+      `Apply the latest migrations (supabase/migrations/0002_posts_extras.sql) and try again.`
+    );
+  }
+  if (n.code === '42501' || (n.message && n.message.toLowerCase().includes('row-level security'))) {
+    return `${step} failed: permission denied by row-level security. Verify your role and table policies.`;
+  }
+  if (n.isEmpty) {
+    return (
+      `${step} failed silently — the database returned an empty error. ` +
+      `This usually means a required table or storage bucket is missing. ` +
+      `Apply supabase/migrations/0002_posts_extras.sql and refresh.`
+    );
+  }
+  return `${step} failed: ${formatErrorSummary(n)}`;
+}
+
+function logError(step: string, err: unknown) {
+  const n = serializeAnyError(err);
+
+  // 1. Single-string log so even Turbopack's collapsed overlay shows the cause.
+  console.error(`[compose] ${step} failed → ${formatErrorSummary(n)}`);
+
+  // 2. Structured object for full inspection in real DevTools.
+  console.error(`[compose] ${step} details:`, {
+    message:   n.message,
+    code:      n.code,
+    status:    n.status,
+    details:   n.details,
+    hint:      n.hint,
+    name:      n.name,
+    className: n.className,
+    extra:     n.extra,
+    raw:       err,
+  });
+}
+
+/** Custom Error wrapper that carries a step label and the original cause. */
+class StepError extends Error {
+  step: string;
+  userMessage: string;
+  cause: unknown;
+  constructor(step: string, cause: unknown) {
+    const message = describeError(step, cause);
+    super(message);
+    this.name = 'StepError';
+    this.step = step;
+    this.userMessage = message;
+    this.cause = cause;
+  }
+}
+
 // Convert an ISO string to the `datetime-local` input format (YYYY-MM-DDTHH:mm)
 // in the user's local timezone.
 function isoToLocalInput(iso: string | null): string {
@@ -45,6 +200,101 @@ function isoToLocalInput(iso: string | null): string {
   const d = new Date(iso);
   const tzOffset = d.getTimezoneOffset() * 60_000;
   return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+}
+
+interface MediaInsertPayload {
+  post_id: string;
+  user_id: string;
+  file_url: string;
+  file_type: string;
+  file_name: string;
+  mime_type: string;
+  size: number;
+  storage_path: string;
+}
+
+function getFileType(file: File): string {
+  return file.type.split('/')[0] || 'unknown';
+}
+
+function buildStoragePath(userId: string, file: File): string {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+  return `${userId}/${Date.now()}-${safeName}`;
+}
+
+async function savePostMedia({
+  postId,
+  userId,
+  file,
+}: {
+  postId: string;
+  userId: string;
+  file: File;
+}) {
+  const BUCKET = 'media';
+  const uploadPath = buildStoragePath(userId, file);
+  const mimeType = file.type || 'application/octet-stream';
+
+  console.log('[compose] storage upload — bucket:', BUCKET);
+  console.log('[compose] storage upload — path:', uploadPath);
+  console.log('[compose] storage upload — file:', file.name, `(${file.size} bytes)`);
+
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from(BUCKET)
+    .upload(uploadPath, file, {
+      upsert: false,
+      contentType: mimeType,
+    });
+
+  console.log('[compose] storage upload result:', uploadData);
+
+  if (uploadError) {
+    console.error('[compose] storage upload error:', uploadError);
+    throw new StepError('Uploading media', uploadError);
+  }
+
+  const { data: { publicUrl } } = supabase.storage
+    .from(BUCKET)
+    .getPublicUrl(uploadPath);
+
+  console.log('[compose] storage public URL:', publicUrl);
+
+  const mediaPayload: MediaInsertPayload = {
+    post_id: postId,
+    user_id: userId,
+    file_url: publicUrl,
+    file_type: getFileType(file),
+    file_name: file.name,
+    mime_type: mimeType,
+    size: file.size,
+    storage_path: uploadPath,
+  };
+
+  console.log('[compose] media insert payload:', mediaPayload);
+
+  const { data: mediaData, error: mediaError } = await supabase
+    .from('media')
+    .insert(mediaPayload)
+    .select('id')
+    .single();
+
+  console.log('[compose] media insert result:', mediaData);
+
+  if (mediaError) {
+    console.error('[compose] media insert error:', mediaError);
+
+    // The file made it to Storage but the metadata row failed. Remove the
+    // orphaned object so retrying the compose flow stays clean.
+    const { error: removeError } = await supabase.storage
+      .from(BUCKET)
+      .remove([uploadPath]);
+
+    if (removeError) {
+      logError('Cleaning uploaded media after failed metadata insert', removeError);
+    }
+
+    throw new StepError('Saving media record', mediaError);
+  }
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -162,6 +412,12 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     setErrorMsg(null);
     setSuccessMsg(null);
 
+    // Track partial state so we can roll back a freshly-created post if a
+    // follow-up step fails.  Edit-mode never sets `createdNewPost = true`
+    // because we're updating an existing row.
+    let postId: string | null = null;
+    let createdNewPost = false;
+
     try {
       const postStatus: PostStatus =
         action === 'draft'
@@ -175,11 +431,9 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           ? new Date(scheduledAt).toISOString()
           : null;
 
-      let postId: string;
-
+      // ── 1. Create or update the post row ───────────────────────────────
       if (isEdit && initialPost) {
-        // ── UPDATE existing post ───────────────────────────────────────────
-        const { data, error: updateError } = await supabase
+        const { data, error } = await supabase
           .from('posts')
           .update({
             content:      content.trim(),
@@ -189,20 +443,17 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           .eq('id', initialPost.id)
           .select('id')
           .single();
-
-        console.log('[compose] update result:', { data, updateError });
-        if (updateError) throw updateError;
+        if (error) throw new StepError('Updating post', error);
         postId = data.id;
 
-        // Replace platforms (delete + insert) so set semantics are correct
+        // Clear existing platforms so we can re-insert the current set.
         const { error: delErr } = await supabase
           .from('post_platforms')
           .delete()
           .eq('post_id', postId);
-        if (delErr) throw delErr;
+        if (delErr) throw new StepError('Clearing previous platforms', delErr);
       } else {
-        // ── INSERT new post ────────────────────────────────────────────────
-        const { data, error: insertError } = await supabase
+        const { data, error } = await supabase
           .from('posts')
           .insert({
             user_id:      userId,
@@ -212,41 +463,35 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           })
           .select('id')
           .single();
-
-        console.log('[compose] insert result:', { data, insertError });
-        if (insertError) throw insertError;
+        if (error) throw new StepError('Saving post', error);
         postId = data.id;
+        createdNewPost = true;
       }
 
-      // ── Platforms ────────────────────────────────────────────────────────
+      console.log('[compose] post saved with id:', postId);
+
+      // ── 2. Insert platforms ───────────────────────────────────────────
       if (platforms.length > 0) {
-        const { error: platformError } = await supabase
+        const { error } = await supabase
           .from('post_platforms')
-          .insert(platforms.map((p) => ({ post_id: postId, platform: p })));
-        if (platformError) throw platformError;
+          .insert(platforms.map((p) => ({ post_id: postId!, platform: p })));
+        if (error) throw new StepError('Saving platforms', error);
       }
 
-      // ── Media (only for new uploads; replacing media is a future TODO) ──
+      // ── 3. Upload + record media ──────────────────────────────────────
       if (file) {
-        const ext  = file.name.split('.').pop() ?? 'jpg';
-        const path = `${userId}/${postId}.${ext}`;
+        if (!postId) {
+          throw new StepError('Saving media record', 'Post was not saved before media upload.');
+        }
 
-        const { error: uploadError } = await supabase.storage
-          .from('posts')
-          .upload(path, file, { upsert: true });
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('posts')
-          .getPublicUrl(path);
-
-        const { error: mediaError } = await supabase
-          .from('media')
-          .insert({ post_id: postId, url: publicUrl });
-        if (mediaError) throw mediaError;
+        await savePostMedia({
+          postId,
+          userId,
+          file,
+        });
       }
 
-      // ── Success ──────────────────────────────────────────────────────────
+      // ── 4. Success ────────────────────────────────────────────────────
       const messages: Record<PostStatus, string> = {
         published: isEdit ? 'Post updated and published.'                           : 'Post published successfully!',
         scheduled: `Post scheduled for ${new Date(scheduledAt).toLocaleString()}.`,
@@ -256,17 +501,32 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
       setPageStatus('success');
 
       if (isEdit) {
-        // Edit flow: bounce back to the feed shortly
         setTimeout(() => router.push('/dashboard/posts'), 900);
       } else {
         resetForm();
       }
     } catch (err) {
-      console.error('[compose] submit error:', err);
+      // ── Detailed structured logging ──────────────────────────────────
+      const step  = err instanceof StepError ? err.step : 'submit';
+      const cause = err instanceof StepError ? err.cause : err;
+      logError(step, cause);
+
+      // ── Roll back orphan post on partial failure ─────────────────────
+      // (Only when we created a fresh post in this call.  Edit mode is left
+      //  alone because the row existed before the user touched it.)
+      if (createdNewPost && postId) {
+        console.warn('[compose] rolling back orphan post', postId);
+        const { error: cleanupError } = await supabase
+          .from('posts')
+          .delete()
+          .eq('id', postId);
+        if (cleanupError) {
+          logError('Orphan post cleanup', cleanupError);
+        }
+      }
+
       setPageStatus('error');
-      setErrorMsg(
-        err instanceof Error ? err.message : 'Something went wrong. Please try again.',
-      );
+      setErrorMsg(describeError(step, cause));
     } finally {
       setLoading(false);
     }
