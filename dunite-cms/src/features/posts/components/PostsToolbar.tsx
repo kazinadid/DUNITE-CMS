@@ -9,6 +9,7 @@ const FILTERS: { id: StatusFilter; label: string }[] = [
   { id: 'draft',      label: 'Drafts'     },
   { id: 'scheduled',  label: 'Scheduled'  },
   { id: 'publishing', label: 'Publishing' },
+  { id: 'retrying',   label: 'Retrying'   },
   { id: 'published',  label: 'Published'  },
   { id: 'failed',     label: 'Failed'     },
 ];

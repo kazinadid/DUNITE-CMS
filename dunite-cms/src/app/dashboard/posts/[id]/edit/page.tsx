@@ -39,5 +39,5 @@ export default async function EditPostPage({
 
   const post = mapPostRow(row);
 
-  return <ComposeForm initialPost={post} />;
+  return <ComposeForm initialPost={post} userRole={auth.role} />;
 }

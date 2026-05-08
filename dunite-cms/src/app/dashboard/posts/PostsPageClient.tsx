@@ -45,6 +45,7 @@ import {
   patchPostLifecycle,
   publishNow,
   resetToDraft,
+  retryPublishingJob,
   type Post,
   type PostCardAction,
   type StatusFilter,
@@ -115,6 +116,7 @@ export function PostsPageClient({
 
   const [page,           setPage]           = useState(1);
   const [pending,       setPending]       = useState<PendingMap>({});
+  const [retryingJobId,   setRetryingJobId]  = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Post | null>(null);
   const [detailPost,    setDetailPost]    = useState<Post | null>(null);
   const [isRefreshing,  startRefresh]     = useTransition();
@@ -256,6 +258,28 @@ export function PostsPageClient({
         return next;
       }),
     [],
+  );
+
+  const handleRetryPublishingJob = useCallback(
+    async (jobId: string) => {
+      setRetryingJobId(jobId);
+      try {
+        await retryPublishingJob(jobId);
+        success({
+          title:       'Retry queued',
+          description: 'Platform delivery will be attempted again shortly.',
+        });
+        await fetchPage({ force: true });
+      } catch (e: unknown) {
+        showError({
+          title:       'Could not retry',
+          description: e instanceof Error ? e.message : 'Try again later.',
+        });
+      } finally {
+        setRetryingJobId(null);
+      }
+    },
+    [fetchPage, showError, success],
   );
 
   const handleConfirmDelete = useCallback(async () => {
@@ -664,6 +688,8 @@ export function PostsPageClient({
                   selectable={selectionMode}
                   selected={selectedIds.has(post.id)}
                   onSelectToggle={() => toggleSelected(post.id)}
+                  onRetryPublishingJob={manage && canEditAny ? handleRetryPublishingJob : undefined}
+                  retryingJobId={retryingJobId}
                   onAction={handleAction}
                 />
               );

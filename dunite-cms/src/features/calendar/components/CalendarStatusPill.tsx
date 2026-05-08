@@ -6,6 +6,7 @@ import {
   Clock,
   FileText,
   Loader2,
+  RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -60,6 +61,14 @@ const STATUS_STYLES: Record<
       'border border-red-200 bg-red-50 text-red-900 ring-1 ring-inset ring-red-200/75',
     Icon:      AlertTriangle,
     iconClass: 'text-red-700',
+  },
+  retrying: {
+    label:     'Retrying',
+    pill:
+      'border border-orange-200 bg-orange-50 text-orange-950 ring-1 ring-inset ring-orange-200/75',
+    Icon:      RefreshCw,
+    iconClass: 'text-orange-700',
+    spin:      true,
   },
 };
 

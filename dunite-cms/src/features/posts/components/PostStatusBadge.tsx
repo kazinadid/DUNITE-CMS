@@ -4,6 +4,7 @@ import {
   Clock,
   FileText,
   Loader2,
+  RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -56,6 +57,14 @@ const STYLES: Record<PostStatus, StatusStyle> = {
     bg:    'bg-red-50',
     text:  'text-red-700',
     ring:  'ring-red-300/60',
+  },
+  retrying: {
+    label: 'Retrying',
+    icon:  RefreshCw,
+    bg:    'bg-orange-50',
+    text:  'text-orange-800',
+    ring:  'ring-orange-300/60',
+    spin:  true,
   },
 };
 

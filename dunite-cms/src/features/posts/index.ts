@@ -48,6 +48,8 @@ export {
   bulkPublishNow,
   bulkMoveToDraft,
   bulkSchedulePosts,
+  syncPublishingPipeline,
+  retryPublishingJob,
 } from './services/postsService';
 
 export type { PostSortOption, ListPostsPageParams } from './services/postsService';
@@ -62,4 +64,7 @@ export type {
   WritablePostStatus,
   PostDraft,
   StatusFilter,
+  PublishingJob,
+  PublishingJobStatus,
+  PublishingLogEntry,
 } from './types';

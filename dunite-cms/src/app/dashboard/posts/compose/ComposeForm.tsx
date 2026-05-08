@@ -28,6 +28,9 @@ import {
 } from '@/features/composer';
 import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import type { Post, PostMedia, WritablePostStatus } from '@/features/posts';
+import { syncPublishingPipeline } from '@/features/posts/services/postsService';
+import type { Role } from '@/features/auth';
+import { canPublishPost } from '@/lib/rbac';
 import { supabase } from '@/lib/supabaseClient';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -44,6 +47,8 @@ type LoadingAction = SubmitAction | null;
 interface ComposeFormProps {
   /** When provided, the form acts as an editor (UPDATE) instead of a creator (INSERT). */
   initialPost?: Post;
+  /** From server auth — editors may draft/schedule but never publish directly. */
+  userRole: Role;
 }
 
 interface RemovedMedia {
@@ -423,7 +428,7 @@ async function savePostWithAssets({
   media,
   removedMedia,
   onMediaPendingPatch,
-}: SavePostWorkflowInput) {
+}: SavePostWorkflowInput): Promise<string> {
   let postId: string | null = null;
   let createdNewPost = false;
 
@@ -493,6 +498,8 @@ async function savePostWithAssets({
     }
     throw err;
   }
+
+  return postId!;
 }
 
 function saveDraft(input: Omit<SavePostWorkflowInput, 'status' | 'scheduledIso'>) {
@@ -536,7 +543,7 @@ function savedItemsFromPost(media: PostMedia[]): ComposerMedia[] {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function ComposeForm({ initialPost }: ComposeFormProps) {
+export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
   const router = useRouter();
   const editorRef   = useRef<ComposerEditorHandle>(null);
   const uploaderRef = useRef<MediaUploaderHandle>(null);
@@ -549,6 +556,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     error: showError,
     setDialogOpen,
   } = useFeedback();
+
+  const allowDirectPublish = canPublishPost(userRole);
 
   const isEdit = Boolean(initialPost);
 
@@ -643,6 +652,9 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
   }, []);
 
   // ── Derived state ─────────────────────────────────────────────────────────
+  const effectiveScheduleMode: ScheduleMode = allowDirectPublish ? scheduleMode : 'schedule';
+  const isScheduling = effectiveScheduleMode === 'schedule';
+
   const tightestMediaCap = useMemo(() => {
     if (platforms.length === 0) return undefined;
     return Math.min(...platforms.map((p) => PLATFORMS[p].maxMedia));
@@ -652,14 +664,15 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     return validatePost(
       { content, platforms, media: items },
       {
-        action:        scheduleMode === 'schedule' ? 'schedule' : 'publish',
-        scheduledIso:  scheduleMode === 'schedule' && scheduledAt
+        action:        isScheduling ? 'schedule' : 'publish',
+        scheduledIso:
+          isScheduling && scheduledAt
           ? new Date(scheduledAt).toISOString()
           : null,
         minLeadMs:     MIN_LEAD_MS,
       },
     );
-  }, [content, platforms, items, scheduleMode, scheduledAt]);
+  }, [content, platforms, items, isScheduling, scheduledAt]);
 
   /** Draft saves stay permissive, but honor per-channel hard caps segment-by-segment for X threads. */
   const draftBlockedByChars = useMemo(() => {
@@ -754,7 +767,6 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     });
   }, [items, platforms]);
 
-  const isScheduling   = scheduleMode === 'schedule';
   const primaryAction: SubmitAction = isScheduling ? 'schedule' : 'publish';
   const primaryLoading = loading && (loadingAction === 'publish' || loadingAction === 'schedule');
   const draftLoading   = loading && loadingAction === 'draft';
@@ -877,6 +889,15 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     }
     if (loading) return;
 
+    if (action === 'publish' && !allowDirectPublish) {
+      showError({
+        title: 'Publishing restricted',
+        description:
+          'Editors do not have permission to publish directly. Schedule your post or ask an administrator to publish.',
+      });
+      return;
+    }
+
     // Drafts are forgiving — only validate hard size cap.
     if (action !== 'draft' && !validation.canSubmit) {
       const first = validation.errors[0];
@@ -903,7 +924,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           : null;
 
       if (action === 'draft') {
-        await saveDraft({
+        const postId = await saveDraft({
           isEdit,
           initialPostId: initialPost?.id,
           userId,
@@ -913,6 +934,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           removedMedia: removed,
           onMediaPendingPatch: patchMediaPending,
         });
+
+        await syncPublishingPipeline(postId);
 
         showModalFeedback({
           variant: 'success',
@@ -925,7 +948,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
         return;
       }
 
-      await savePostWithAssets({
+      const postId = await savePostWithAssets({
         isEdit,
         initialPostId: initialPost?.id,
         userId,
@@ -937,6 +960,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
         removedMedia: removed,
         onMediaPendingPatch: patchMediaPending,
       });
+
+      await syncPublishingPipeline(postId);
 
       const title =
         action === 'schedule'
@@ -1052,7 +1077,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
 
             <Section title="Scheduling">
               <div className="flex flex-wrap gap-2">
-                {(['now', 'schedule'] as const).map((mode) => (
+                {(allowDirectPublish ? (['now', 'schedule'] as const) : (['schedule'] as const)).map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -1060,7 +1085,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
                     disabled={loading}
                     className={[
                       'inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-medium transition-all',
-                      scheduleMode === mode
+                      (allowDirectPublish ? scheduleMode === mode : mode === 'schedule')
                         ? 'border-gray-900 bg-gray-900 text-white shadow-sm'
                         : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50',
                       'disabled:cursor-not-allowed disabled:opacity-60',
@@ -1072,7 +1097,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
                 ))}
               </div>
 
-              {scheduleMode === 'schedule' && (
+              {effectiveScheduleMode === 'schedule' && (
                 <div className="mt-3">
                   <label
                     htmlFor="schedule-datetime"

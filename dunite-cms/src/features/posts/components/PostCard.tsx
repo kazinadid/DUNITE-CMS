@@ -9,6 +9,7 @@ import {
   FileEdit,
   Loader2,
   Pencil,
+  RefreshCw,
   Rocket,
   Trash2,
 } from 'lucide-react';
@@ -43,6 +44,9 @@ export interface PostCardCapabilities {
   selectable?: boolean;
   selected?:   boolean;
   onSelectToggle?: () => void;
+  /** Per-platform job retry (failed jobs). */
+  onRetryPublishingJob?: (jobId: string) => void;
+  retryingJobId?:       string | null;
 }
 
 interface PostCardProps extends PostCardCapabilities {
@@ -57,6 +61,7 @@ const STATUS_ACCENT: Record<PostStatus, string> = {
   publishing: 'border-blue-200/70',
   published:  'border-emerald-200/70',
   failed:     'border-red-200/85',
+  retrying:   'border-orange-200/80',
 };
 
 function PostCardImpl({
@@ -69,6 +74,8 @@ function PostCardImpl({
   selectable    = false,
   selected      = false,
   onSelectToggle,
+  onRetryPublishingJob,
+  retryingJobId = null,
   pending       = null,
   onAction,
 }: PostCardProps) {
@@ -80,8 +87,15 @@ function PostCardImpl({
   const cover           = post.media[0];
   const extraMediaCount = Math.max(0, post.media.length - 1);
   const isFailed        = post.status === 'failed';
+  const isRetrying      = post.status === 'retrying';
   const isPublished     = post.status === 'published';
   const isScheduled     = post.status === 'scheduled';
+
+  const jobs = post.publishing_jobs ?? [];
+  const hasJobAttention =
+    jobs.some((j) => j.status === 'failed' || j.status === 'retrying') ||
+    isFailed ||
+    isRetrying;
 
   const actions: PostAction[] = useMemo(() => {
     const list: PostAction[] = [];
@@ -146,6 +160,7 @@ function PostCardImpl({
         'hover:-translate-y-0.5 hover:shadow-[0_20px_40px_-28px_rgba(15,23,42,0.35)]',
         STATUS_ACCENT[post.status],
         isFailed ? 'hover:border-red-300' : 'hover:border-gray-300/90',
+        (isFailed || isRetrying || hasJobAttention) && 'ring-1 ring-[#7A0000]/15',
         isBusy && 'pointer-events-none',
         selected && selectable && 'ring-[3px] ring-[#7A0000]/38 ring-offset-2 ring-offset-white',
       )}
@@ -197,6 +212,11 @@ function PostCardImpl({
           <PostStatusBadge status={post.status} />
           {isFailed && post.last_publish_error && (
             <p className="line-clamp-2 text-[11px] leading-snug text-red-700" title={post.last_publish_error}>
+              {post.last_publish_error}
+            </p>
+          )}
+          {!isFailed && isRetrying && post.last_publish_error && (
+            <p className="line-clamp-2 text-[11px] leading-snug text-orange-800" title={post.last_publish_error}>
               {post.last_publish_error}
             </p>
           )}
@@ -253,6 +273,68 @@ function PostCardImpl({
           {post.platforms.map((p) => (
             <PlatformBadge key={p} platform={p} />
           ))}
+        </div>
+      )}
+
+      {jobs.length > 0 && (
+        <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+            Publishing pipeline
+          </p>
+          <ul className="space-y-1.5">
+            {jobs.map((job) => {
+              const canRetryThis =
+                Boolean(canEdit && onRetryPublishingJob) &&
+                job.status === 'failed' &&
+                job.attempt_count < job.max_attempts;
+              const busy = retryingJobId === job.id;
+              return (
+                <li
+                  key={job.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-gray-50/90 px-2 py-1.5 text-[11px]"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <PlatformBadge platform={job.platform} size="sm" />
+                    <span
+                      className={cn(
+                        'truncate font-medium capitalize',
+                        job.status === 'failed' && 'text-red-700',
+                        job.status === 'retrying' && 'text-orange-700',
+                        job.status === 'queued' && 'text-slate-600',
+                        job.status === 'processing' && 'text-blue-700',
+                        job.status === 'succeeded' && 'text-emerald-700',
+                        job.status === 'cancelled' && 'text-gray-500',
+                      )}
+                    >
+                      {job.status.replace(/_/g, ' ')}
+                    </span>
+                  </span>
+                  <span className="shrink-0 tabular-nums text-[10px] text-gray-400">
+                    {job.attempt_count}/{job.max_attempts}
+                  </span>
+                  {canRetryThis && onRetryPublishingJob ? (
+                    <button
+                      type="button"
+                      data-card-interactive
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRetryPublishingJob(job.id);
+                      }}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-[#7A0000] ring-1 ring-[#7A0000]/20 transition hover:bg-[#7A0000]/5 disabled:opacity-50"
+                    >
+                      {busy ? (
+                        <Loader2 size={10} className="animate-spin" aria-hidden />
+                      ) : (
+                        <RefreshCw size={10} aria-hidden />
+                      )}
+                      Retry
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
 

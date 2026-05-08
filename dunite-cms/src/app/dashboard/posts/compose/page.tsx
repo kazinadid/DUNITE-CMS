@@ -3,6 +3,6 @@ import { requireWriter } from '@/features/auth/server';
 import { ComposeForm } from './ComposeForm';
 
 export default async function ComposePage() {
-  await requireWriter(); // viewer → /dashboard
-  return <ComposeForm />;
+  const auth = await requireWriter();
+  return <ComposeForm userRole={auth.role} />;
 }

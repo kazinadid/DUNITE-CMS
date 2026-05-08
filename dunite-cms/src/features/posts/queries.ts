@@ -7,7 +7,14 @@
 //  end-to-end.
 // ============================================================================
 
-import type { Post, PostPublishEvent, PostStatus } from './types';
+import type {
+  Post,
+  PostPublishEvent,
+  PostStatus,
+  PublishingJob,
+  PublishingJobStatus,
+  PublishingLogEntry,
+} from './types';
 
 /**
  * Always read author + platforms + media so the UI can render a fully-formed
@@ -19,13 +26,20 @@ export const POST_LIST_SELECT = `
   last_publish_error, publish_attempt_count, failure_sort_key,
   author:users!posts_user_id_fkey ( id, name, email ),
   post_platforms ( platform ),
-  media ( id, file_url, file_type, file_name, mime_type, storage_path, order_index )
+  media ( id, file_url, file_type, file_name, mime_type, storage_path, order_index ),
+  publishing_jobs (
+    id, platform, status, attempt_count, max_attempts, scheduled_for,
+    started_at, completed_at, last_error, updated_at
+  )
 ` as const;
 
-/** Detail view + publish telemetry log (timeline). */
+/** Detail view + publish telemetry log (timeline) + structured publishing logs. */
 export const POST_DETAIL_SELECT = `
   ${POST_LIST_SELECT.trim()},
-  post_publish_events ( id, created_at, kind, message )
+  post_publish_events ( id, created_at, kind, message ),
+  publishing_logs (
+    id, post_id, publishing_job_id, platform, event_type, message, metadata, created_at
+  )
 ` as const;
 
 /** @deprecated Prefer POST_LIST_SELECT or POST_DETAIL_SELECT for clarity */
@@ -65,6 +79,32 @@ export interface RawPostRow {
         message: string;
       }[]
     | null;
+  publishing_jobs?:
+    | {
+        id: string;
+        platform: string;
+        status: string;
+        attempt_count: number | null;
+        max_attempts: number | null;
+        scheduled_for: string;
+        started_at: string | null;
+        completed_at: string | null;
+        last_error: string | null;
+        updated_at: string;
+      }[]
+    | null;
+  publishing_logs?:
+    | {
+        id: string;
+        post_id: string;
+        publishing_job_id: string | null;
+        platform: string | null;
+        event_type: string;
+        message: string;
+        metadata: Record<string, unknown> | null;
+        created_at: string;
+      }[]
+    | null;
 }
 
 function mapPublishEvent(raw: NonNullable<RawPostRow['post_publish_events']>[number]): PostPublishEvent {
@@ -81,11 +121,62 @@ function mapPublishEvent(raw: NonNullable<RawPostRow['post_publish_events']>[num
   };
 }
 
+const JOB_STATUS_SET = new Set<string>([
+  'queued',
+  'processing',
+  'succeeded',
+  'failed',
+  'retrying',
+  'cancelled',
+]);
+
+function mapPublishingJob(
+  raw: NonNullable<RawPostRow['publishing_jobs']>[number],
+): PublishingJob {
+  const st     = raw.status;
+  const status = JOB_STATUS_SET.has(st)
+    ? (st as PublishingJobStatus)
+    : 'queued';
+  return {
+    id:              raw.id,
+    platform:        raw.platform,
+    status,
+    attempt_count:   raw.attempt_count ?? 0,
+    max_attempts:    raw.max_attempts ?? 5,
+    scheduled_for:   raw.scheduled_for,
+    started_at:      raw.started_at,
+    completed_at:    raw.completed_at,
+    last_error:      raw.last_error,
+    updated_at:      raw.updated_at,
+  };
+}
+
+function mapPublishingLog(
+  raw: NonNullable<RawPostRow['publishing_logs']>[number],
+): PublishingLogEntry {
+  return {
+    id:                raw.id,
+    post_id:           raw.post_id,
+    publishing_job_id: raw.publishing_job_id,
+    platform:          raw.platform,
+    event_type:        raw.event_type,
+    message:           raw.message,
+    metadata:          raw.metadata ?? null,
+    created_at:        raw.created_at,
+  };
+}
+
 export function mapPostRow(row: RawPostRow): Post {
   const eventsRaw = row.post_publish_events ?? [];
   const publish_events: PostPublishEvent[] = [...eventsRaw]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .map(mapPublishEvent);
+
+  const publishing_jobs: PublishingJob[] = (row.publishing_jobs ?? []).map(mapPublishingJob);
+
+  const publishing_logs: PublishingLogEntry[] = [...(row.publishing_logs ?? [])]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map(mapPublishingLog);
 
   return {
     id:                     row.id,
@@ -101,6 +192,8 @@ export function mapPostRow(row: RawPostRow): Post {
     author:                 row.author,
     platforms:              (row.post_platforms ?? []).map((p) => p.platform),
     publish_events,
+    publishing_jobs,
+    publishing_logs,
     media: (row.media ?? [])
       // Drop legacy/incomplete rows where the upload never wrote a URL.
       .filter((m) => Boolean(m.file_url))

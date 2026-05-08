@@ -11,6 +11,33 @@ import type { StatusFilter } from '../types';
 
 // ── List / paging ─────────────────────────────────────────────────────────────
 
+/**
+ * Rebuild per-platform `publishing_jobs` from `posts` + `post_platforms`.
+ * Idempotent — invokes Supabase RPC `replace_publishing_jobs`.
+ */
+export async function syncPublishingPipeline(postId: string): Promise<void> {
+  const { error } = await supabase.rpc('replace_publishing_jobs', { p_post_id: postId });
+  if (error) console.warn('[posts] syncPublishingPipeline:', error.message);
+}
+
+/** Surface retry for a failed job row (exponential backoff inside RPC). */
+export async function retryPublishingJob(jobId: string): Promise<void> {
+  const { error } = await supabase.rpc('retry_publishing_job', { p_job_id: jobId });
+  if (error) throw error;
+}
+
+/** Refetch list-shaped post (platforms + `publishing_jobs`) after pipeline RPC mutates job rows. */
+async function refetchPostListShape(id: string): Promise<Post> {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_SELECT)
+    .eq('id', id)
+    .single();
+
+  if (error) throw error;
+  return mapPostRow(data as unknown as RawPostRow);
+}
+
 export type PostSortOption =
   | 'newest'
   | 'oldest'
@@ -166,19 +193,18 @@ export async function deletePost(id: string): Promise<void> {
  * Caller-side RBAC: admin only. The DB enforces the same via RLS.
  */
 export async function publishNow(id: string): Promise<Post> {
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('posts')
     .update({
       status:       'published',
       scheduled_at: null,
       published_at: new Date().toISOString(),
     })
-    .eq('id', id)
-    .select(POST_SELECT)
-    .single();
+    .eq('id', id);
 
   if (error) throw error;
-  return mapPostRow(data as unknown as RawPostRow);
+  await syncPublishingPipeline(id);
+  return refetchPostListShape(id);
 }
 
 /**
@@ -186,18 +212,17 @@ export async function publishNow(id: string): Promise<Post> {
  * Clears `published_at` because the original publish never landed.
  */
 export async function resetToDraft(id: string): Promise<Post> {
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('posts')
     .update({
       status:       'draft',
       published_at: null,
     })
-    .eq('id', id)
-    .select(POST_SELECT)
-    .single();
+    .eq('id', id);
 
   if (error) throw error;
-  return mapPostRow(data as unknown as RawPostRow);
+  await syncPublishingPipeline(id);
+  return refetchPostListShape(id);
 }
 
 /** Clone an existing post into a new draft owned by the same user. */
@@ -225,7 +250,8 @@ export async function duplicatePost(post: Post): Promise<Post> {
 
   const fresh = await getPost(created.id);
   if (!fresh) throw new Error('Failed to load duplicated post');
-  return fresh;
+  await syncPublishingPipeline(fresh.id);
+  return refetchPostListShape(fresh.id);
 }
 
 /**
@@ -235,18 +261,17 @@ export async function rescheduleCalendarPost(
   id: string,
   scheduledAtIso: string,
 ): Promise<Post> {
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('posts')
     .update({
       scheduled_at: scheduledAtIso,
       updated_at:   new Date().toISOString(),
     })
-    .eq('id', id)
-    .select(POST_SELECT)
-    .single();
+    .eq('id', id);
 
   if (error) throw error;
-  return mapPostRow(data as unknown as RawPostRow);
+  await syncPublishingPipeline(id);
+  return refetchPostListShape(id);
 }
 
 /** Calendar/modal workflow edits — constrained columns; RLS is the gate. */
@@ -254,18 +279,17 @@ export async function patchPostLifecycle(
   id: string,
   patch: Partial<Pick<Post, 'status' | 'scheduled_at' | 'published_at'>>,
 ): Promise<Post> {
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('posts')
     .update({
       ...patch,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', id)
-    .select(POST_SELECT)
-    .single();
+    .eq('id', id);
 
   if (error) throw error;
-  return mapPostRow(data as unknown as RawPostRow);
+  await syncPublishingPipeline(id);
+  return refetchPostListShape(id);
 }
 
 // ── Bulk mutations (sequential — predictable RLS + error surfacing) ────────

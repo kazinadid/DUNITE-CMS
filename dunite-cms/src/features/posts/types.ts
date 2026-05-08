@@ -3,7 +3,8 @@ export type PostStatus =
   | 'scheduled'
   | 'publishing'
   | 'published'
-  | 'failed';
+  | 'failed'
+  | 'retrying';
 
 /**
  * Statuses the composer can deliberately write. Transient/system-driven states
@@ -34,6 +35,41 @@ export interface PostPublishEvent {
   message: string;
 }
 
+/** Per-platform execution row (Supabase `publishing_jobs`). */
+export type PublishingJobStatus =
+  | 'queued'
+  | 'processing'
+  | 'succeeded'
+  | 'failed'
+  | 'retrying'
+  | 'cancelled';
+
+export interface PublishingJob {
+  id:              string;
+  /** Present on full table / worker scans; omitted in nested post selects. */
+  post_id?:        string;
+  platform:        string;
+  status:          PublishingJobStatus;
+  attempt_count:   number;
+  max_attempts:    number;
+  scheduled_for:   string;
+  started_at:      string | null;
+  completed_at:    string | null;
+  last_error:      string | null;
+  updated_at:      string;
+}
+
+export interface PublishingLogEntry {
+  id:                string;
+  post_id:           string;
+  publishing_job_id: string | null;
+  platform:          string | null;
+  event_type:        string;
+  message:           string;
+  metadata:          Record<string, unknown> | null;
+  created_at:        string;
+}
+
 export interface Post {
   id: string;
   user_id: string;
@@ -52,6 +88,10 @@ export interface Post {
   media: PostMedia[];
   /** Populated when loaded with `POST_DETAIL_SELECT`; otherwise []. */
   publish_events: PostPublishEvent[];
+  /** Per-platform pipeline rows when list/detail select includes `publishing_jobs`. */
+  publishing_jobs: PublishingJob[];
+  /** Structured infra log; detail select only. */
+  publishing_logs: PublishingLogEntry[];
 }
 
 export type StatusFilter = 'all' | PostStatus;

@@ -38,11 +38,16 @@ export function CalendarPlannerEvent({ arg }: CalendarPlannerEventProps) {
 
   const title = `${timeLine ? `${timeLine} · ` : ''}${post.content?.slice(0, 80) ?? 'Post'}${(post.content?.length ?? 0) > 80 ? '…' : ''}`;
 
+  const jobs = post.publishing_jobs ?? [];
+  const jobPipelineIssue = jobs.some((j) => j.status === 'failed' || j.status === 'retrying');
+
   return (
     <div
       className={cn(
         'planner-event-face relative h-full overflow-hidden rounded-[10px] border border-border/70 bg-gradient-to-br from-card/98 via-card/95 to-muted/25 px-2 py-1.5 shadow-[0_6px_18px_-10px_rgba(15,23,42,0.22),inset_0_1px_0_rgba(255,255,255,0.88)] transition-[transform,box-shadow] duration-200 ease-out',
         compact && 'rounded-[8px] px-1.5 py-1',
+        jobPipelineIssue &&
+          'border-red-300/70 ring-1 ring-red-400/25 shadow-[0_6px_20px_-10px_rgba(127,29,29,0.35)]',
       )}
     >
       <div className="flex min-h-0 flex-col gap-1">
