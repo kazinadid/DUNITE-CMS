@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Dunite CMS",
-  description: "Dunite content management system",
+  title: "DUNITE CMS",
+  description: "DUNITE CMS — enterprise content management",
 };
 
 export default function RootLayout({

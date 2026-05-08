@@ -54,7 +54,7 @@ export function PostsEmptyState({
       {canCreate ? (
         <>
           <p className="mt-1 max-w-xs text-sm text-gray-500">
-            Create your first post to start scheduling content for Dunite.
+            Create your first post to start scheduling content for DUNITE CMS.
           </p>
           <Link
             href="/dashboard/posts/compose"

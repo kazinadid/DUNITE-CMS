@@ -132,7 +132,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <div className="w-8 h-8 rounded-lg bg-white text-[#7A0000] flex items-center justify-center font-bold">
             D
           </div>
-          <span className="font-semibold text-sm">Dunite CMS</span>
+          <span className="font-semibold text-sm">DUNITE CMS</span>
         </div>
 
         <nav className="px-3 space-y-1">
@@ -160,7 +160,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                 <div className="w-8 h-8 rounded-lg bg-white text-[#7A0000] flex items-center justify-center font-bold">
                   D
                 </div>
-                <span className="font-semibold text-sm">Dunite CMS</span>
+                <span className="font-semibold text-sm">DUNITE CMS</span>
               </div>
               <button
                 onClick={() => setMobileOpen(false)}

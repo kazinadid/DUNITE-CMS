@@ -9,8 +9,9 @@ import {
   signInWithPassword,
   signOut as signOutService,
   signUpWithPassword,
+  mapAuthError,
 } from '../services/authService';
-import type { AuthContextValue } from '../types';
+import type { AuthContextValue, SignUpInput, SignUpResult } from '../types';
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -55,11 +56,18 @@ export function AuthProvider({
       loading,
       async signIn(email, password) {
         const { error } = await signInWithPassword(email, password);
-        return { error: error?.message ?? null };
+        return { error: error ? mapAuthError(error.message) : null };
       },
-      async signUp(email, password) {
-        const { error } = await signUpWithPassword(email, password);
-        return { error: error?.message ?? null };
+      async signUp(input: SignUpInput): Promise<SignUpResult> {
+        const result = await signUpWithPassword(
+          input.email,
+          input.password,
+          input.fullName,
+        );
+        if (result.error) {
+          return { error: result.error, hasSession: false };
+        }
+        return { error: null, hasSession: result.hasSession };
       },
       async signOut() {
         await signOutService();
