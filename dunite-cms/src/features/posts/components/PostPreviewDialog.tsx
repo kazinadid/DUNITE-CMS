@@ -1,6 +1,6 @@
 'use client';
 
-import { Calendar, CheckCircle2, Clock } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 
 import {
   Dialog,
@@ -37,7 +37,16 @@ export function PostPreviewDialog({
       <DialogContent
         className="max-h-[85vh] max-w-[calc(100%-2rem)] gap-0 overflow-hidden rounded-2xl border border-gray-200 bg-white p-0 text-gray-900 shadow-2xl shadow-black/25 sm:max-w-2xl"
       >
-        {post && (
+        {!post ? (
+          <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-sm text-gray-500">
+            <DialogTitle className="sr-only">Post preview</DialogTitle>
+            <DialogDescription className="sr-only">
+              Loading read-only details for the selected post.
+            </DialogDescription>
+            <Loader2 className="h-8 w-8 animate-spin text-gray-400" aria-hidden />
+            <span>Loading post…</span>
+          </div>
+        ) : (
           <>
             <DialogHeader className="flex flex-row items-center justify-between gap-4 border-b border-gray-100 px-6 py-4">
               <div className="flex items-center gap-3">

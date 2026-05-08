@@ -286,9 +286,15 @@ export function PostDetailModal({
           className="max-h-[min(94vh,calc(100vh-3rem))] gap-0 overflow-hidden rounded-2xl border border-gray-200/90 p-0 shadow-2xl sm:max-w-xl"
         >
           {!draft ? (
-            <div className="flex items-center justify-center gap-2 px-6 py-16 text-sm text-gray-500">
-              <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-              Loading details…
+            <div className="flex flex-col">
+              <DialogTitle className="sr-only">Post details</DialogTitle>
+              <DialogDescription className="sr-only">
+                Loading the full post record for this modal.
+              </DialogDescription>
+              <div className="flex items-center justify-center gap-2 px-6 py-16 text-sm text-gray-500">
+                <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+                Loading details…
+              </div>
             </div>
           ) : (
             <>

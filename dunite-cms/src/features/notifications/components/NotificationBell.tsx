@@ -12,7 +12,18 @@ import {
   X,
 } from 'lucide-react';
 import Link from 'next/link';
-import { memo, useCallback, useEffect, useMemo, useState, useTransition } from 'react';
+import { usePathname } from 'next/navigation';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from 'react';
+import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { formatAbsolute } from '@/features/posts/lib/relativeTime';
@@ -30,6 +41,14 @@ import {
 import type { NotificationRow } from '../types';
 
 const PANEL_LIMIT = 25;
+
+const PANEL_ID = 'notifications-inbox-panel';
+/** Above dashboard chrome (z-50)—avoids collision with sidebar, header avatar menu, mobile nav */
+const Z_BACKDROP = 160;
+const Z_PANEL = 161;
+const PANEL_MAX_W = 22 * 16; // 22rem
+const GAP = 8;
+const VIEWPORT_MARGIN = 16;
 
 function dayHeading(iso: string) {
   const d     = new Date(iso);
@@ -124,10 +143,99 @@ interface NotificationBellProps {
 }
 
 export function NotificationBell({ userId }: NotificationBellProps) {
+  const pathname = usePathname();
   const [open, setOpen]     = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [panelBox, setPanelBox] = useState<{
+    top: number;
+    right: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef   = useRef<HTMLDivElement>(null);
   const [unread, setUnread] = useState(0);
   const [rows, setRows]     = useState<NotificationRow[]>([]);
   const [busy, start]       = useTransition();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  /** Close on any in-app route change (sidebar, links, browser back/forward). */
+  useLayoutEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  const updatePanelPosition = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+
+    const rect  = el.getBoundingClientRect();
+    const vw    = window.innerWidth;
+    const vh    = window.innerHeight;
+    const width = Math.min(PANEL_MAX_W, vw - VIEWPORT_MARGIN * 2);
+
+    let right = vw - rect.right;
+    right = Math.max(VIEWPORT_MARGIN, Math.min(right, vw - VIEWPORT_MARGIN - width));
+
+    const top = rect.bottom + GAP;
+    const maxHeight = Math.max(200, vh - top - VIEWPORT_MARGIN);
+
+    setPanelBox({ top, right, width, maxHeight });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPanelBox(null);
+      return;
+    }
+    updatePanelPosition();
+  }, [open, updatePanelPosition]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onResize = () => updatePanelPosition();
+    const onScroll   = () => updatePanelPosition();
+
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onScroll, true);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [open, updatePanelPosition]);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  const closePanelAndRestoreFocus = useCallback(() => {
+    setOpen(false);
+    queueMicrotask(() => triggerRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closePanelAndRestoreFocus();
+      }
+    };
+    document.addEventListener('keydown', onEscape, true);
+    return () => document.removeEventListener('keydown', onEscape, true);
+  }, [open, closePanelAndRestoreFocus]);
 
   const load = useCallback(async () => {
     const [c, page] = await Promise.all([
@@ -187,6 +295,50 @@ export function NotificationBell({ userId }: NotificationBellProps) {
     return out;
   }, [rows]);
 
+  /** Initial focus + Tab trap when panel content is in the DOM. */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const refreshFocusables = () =>
+      Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => panel.contains(el) && !el.closest('[aria-hidden="true"]'));
+
+    const focusFirst = () => {
+      const first = refreshFocusables()[0];
+      (first ?? panel).focus();
+    };
+
+    const id = requestAnimationFrame(focusFirst);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const focusables = refreshFocusables();
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last  = focusables[focusables.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    panel.addEventListener('keydown', onKeyDown);
+    return () => {
+      cancelAnimationFrame(id);
+      panel.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, grouped, rows.length, busy]);
+
   const onRead = useCallback(
     (id: string) => {
       start(async () => {
@@ -231,113 +383,147 @@ export function NotificationBell({ userId }: NotificationBellProps) {
       try {
         await dismissAllVisibleNotifications();
         await load();
-        setOpen(false);
+        closePanelAndRestoreFocus();
       } catch {
         /* non-blocking */
       }
     });
-  }, [load]);
+  }, [load, closePanelAndRestoreFocus]);
 
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        aria-label="Notifications"
-        aria-expanded={open}
-        className="relative inline-flex size-9 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-        onClick={() => {
-          setOpen((o) => !o);
-          if (!open) void load();
-        }}
-      >
-        <Bell className="size-[1.15rem]" />
-        {badge}
-      </button>
-
-      {open && (
-        <>
-          <button
-            type="button"
-            aria-label="Close notifications"
-            className="fixed inset-0 z-40 bg-black/20 md:bg-transparent"
-            onClick={() => setOpen(false)}
-          />
-          <div
-            className={cn(
-              'absolute right-0 z-50 mt-2 w-[min(100vw-2rem,22rem)] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl',
-              'max-md:fixed max-md:left-3 max-md:right-3 max-md:top-14 max-md:w-auto',
-            )}
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50/80 px-3 py-2">
-              <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Inbox</p>
-              <div className="flex flex-wrap justify-end gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-[11px]"
-                  disabled={busy}
-                  onClick={() => markAll()}
-                >
-                  <CheckCheck size={12} className="mr-1" />
-                  Read all
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-[11px] text-[#7A0000]"
-                  disabled={busy}
-                  onClick={() => clearInbox()}
-                >
-                  Clear
-                </Button>
-              </div>
-            </div>
-
-            <div className="max-h-[min(70vh,420px)] overflow-y-auto overscroll-contain">
-              {busy && rows.length === 0 ? (
-                <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading…
-                </div>
-              ) : rows.length === 0 ? (
-                <p className="px-4 py-10 text-center text-sm text-gray-500">You&apos;re all caught up.</p>
-              ) : (
-                <ul>
-                  {grouped.map((g) => (
-                    <li key={g.key} className="list-none">
-                      <div className="bg-gray-50/90 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                        {g.label}
-                      </div>
-                      <ul className="divide-y divide-gray-100/80">
-                        {g.items.map((n) => (
-                          <NotificationRowItem
-                            key={n.id}
-                            n={n}
-                            onRead={onRead}
-                            onDismiss={onDismiss}
-                          />
-                        ))}
-                      </ul>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="border-t border-gray-100 bg-gray-50/50 px-3 py-2 text-center">
-              <Link
-                href="/dashboard/notifications"
-                className="text-xs font-semibold text-[#7A0000] hover:underline"
-                onClick={() => setOpen(false)}
+  const portal =
+    open &&
+    mounted &&
+    panelBox &&
+    typeof document !== 'undefined' &&
+    createPortal(
+      <>
+        <div
+          role="presentation"
+          aria-hidden
+          className={cn(
+            'fixed inset-0 bg-black/40 backdrop-blur-[3px]',
+            'animate-in fade-in duration-200',
+          )}
+          style={{ zIndex: Z_BACKDROP }}
+          onClick={closePanelAndRestoreFocus}
+        />
+        <div
+          ref={panelRef}
+          id={PANEL_ID}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`${PANEL_ID}-title`}
+          tabIndex={-1}
+          className={cn(
+            'fixed flex min-h-0 flex-col overflow-hidden',
+            'rounded-2xl border border-gray-200/95 bg-white/98 shadow-[0_24px_48px_-12px_rgba(15,23,42,0.28)] ring-1 ring-black/[0.04]',
+            'animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-200',
+          )}
+          style={{
+            zIndex:    Z_PANEL,
+            top:       panelBox.top,
+            right:     panelBox.right,
+            width:     panelBox.width,
+            maxHeight: panelBox.maxHeight,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-gray-100 bg-gray-50/90 px-3 py-2">
+            <p id={`${PANEL_ID}-title`} className="text-xs font-bold uppercase tracking-wide text-gray-500">
+              Inbox
+            </p>
+            <div className="flex flex-wrap justify-end gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[11px]"
+                disabled={busy}
+                onClick={() => markAll()}
               >
-                Notification center
-              </Link>
+                <CheckCheck size={12} className="mr-1" />
+                Read all
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[11px] text-[#7A0000]"
+                disabled={busy}
+                onClick={() => clearInbox()}
+              >
+                Clear
+              </Button>
             </div>
           </div>
-        </>
-      )}
-    </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            {busy && rows.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500">
+                <Loader2 className="size-4 animate-spin" />
+                Loading…
+              </div>
+            ) : rows.length === 0 ? (
+              <p className="px-4 py-10 text-center text-sm text-gray-500">You&apos;re all caught up.</p>
+            ) : (
+              <ul>
+                {grouped.map((g) => (
+                  <li key={g.key} className="list-none">
+                    <div className="bg-gray-50/90 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                      {g.label}
+                    </div>
+                    <ul className="divide-y divide-gray-100/80">
+                      {g.items.map((n) => (
+                        <NotificationRowItem
+                          key={n.id}
+                          n={n}
+                          onRead={onRead}
+                          onDismiss={onDismiss}
+                        />
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="shrink-0 border-t border-gray-100 bg-gray-50/50 px-3 py-2 text-center">
+            <Link
+              href="/dashboard/notifications"
+              className="text-xs font-semibold text-[#7A0000] hover:underline"
+              onClick={() => setOpen(false)}
+            >
+              Notification center
+            </Link>
+          </div>
+        </div>
+      </>,
+      document.body,
+    );
+
+  return (
+    <>
+      <div className="relative">
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-label="Notifications"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-controls={PANEL_ID}
+          className="relative inline-flex size-9 items-center justify-center rounded-lg text-gray-600 outline-none ring-[#7A0000]/35 hover:bg-gray-100 hover:text-gray-900 focus-visible:ring-2"
+          onClick={() => {
+            setOpen((o) => !o);
+            if (!open) void load();
+          }}
+        >
+          <Bell className="size-[1.15rem]" />
+          {badge}
+        </button>
+      </div>
+      {portal}
+    </>
   );
 }
