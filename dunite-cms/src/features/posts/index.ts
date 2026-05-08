@@ -23,10 +23,12 @@ export { formatRelative, formatAbsolute } from './lib/relativeTime';
 export {
   listPosts,
   getPost,
+  listCalendarPosts,
   deletePost,
   publishNow,
   resetToDraft,
   duplicatePost,
+  rescheduleCalendarPost,
 } from './services/postsService';
 
 // ── Types ───────────────────────────────────────────────────────────────────

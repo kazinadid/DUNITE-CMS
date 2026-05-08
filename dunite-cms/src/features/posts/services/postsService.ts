@@ -26,6 +26,23 @@ export async function getPost(id: string): Promise<Post | null> {
   return data ? mapPostRow(data as unknown as RawPostRow) : null;
 }
 
+/**
+ * Posts inside a UTC half-open `[start, end)` window that have `scheduled_at` set.
+ * Used by `/dashboard/calendar`; RLS restricts rows to what the viewer may see.
+ */
+export async function listCalendarPosts(startIso: string, endIso: string): Promise<Post[]> {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_SELECT)
+    .not('scheduled_at', 'is', null)
+    .gte('scheduled_at', startIso)
+    .lt('scheduled_at', endIso)
+    .order('scheduled_at', { ascending: true });
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as RawPostRow[]).map(mapPostRow);
+}
+
 // ── Writes ───────────────────────────────────────────────────────────────────
 
 export async function deletePost(id: string): Promise<void> {
@@ -100,4 +117,25 @@ export async function duplicatePost(post: Post): Promise<Post> {
   const fresh = await getPost(created.id);
   if (!fresh) throw new Error('Failed to load duplicated post');
   return fresh;
+}
+
+/**
+ * Planner drag-and-drop: move `scheduled_at` while leaving status/workflow untouched.
+ */
+export async function rescheduleCalendarPost(
+  id: string,
+  scheduledAtIso: string,
+): Promise<Post> {
+  const { data, error } = await supabase
+    .from('posts')
+    .update({
+      scheduled_at: scheduledAtIso,
+      updated_at:   new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select(POST_SELECT)
+    .single();
+
+  if (error) throw error;
+  return mapPostRow(data as unknown as RawPostRow);
 }
