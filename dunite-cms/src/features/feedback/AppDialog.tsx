@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +16,7 @@ export interface AppDialogState {
   open: boolean;
   title: string;
   description: string;
+  variant?: 'error' | 'success';
 }
 
 interface AppDialogProps {
@@ -24,6 +25,12 @@ interface AppDialogProps {
 }
 
 export function AppDialog({ state, onOpenChange }: AppDialogProps) {
+  const isSuccess = state.variant === 'success';
+  const Icon = isSuccess ? CheckCircle2 : AlertTriangle;
+  const iconClasses = isSuccess
+    ? 'bg-emerald-50 text-emerald-600 ring-emerald-100'
+    : 'bg-red-50 text-red-600 ring-red-100';
+
   return (
     <Dialog open={state.open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -32,8 +39,8 @@ export function AppDialog({ state, onOpenChange }: AppDialogProps) {
       >
         <div className="p-6">
           <DialogHeader className="items-center text-center">
-            <span className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-red-100">
-              <AlertTriangle size={22} aria-hidden />
+            <span className={`mb-2 flex h-12 w-12 items-center justify-center rounded-full ring-1 ${iconClasses}`}>
+              <Icon size={22} aria-hidden />
             </span>
             <DialogTitle className="text-lg font-semibold tracking-tight text-gray-950">
               {state.title}

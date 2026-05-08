@@ -1,20 +1,25 @@
 'use client';
 
-import { FilePlus2, Plus } from 'lucide-react';
+import { Plus, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 
 import type { Role } from '@/features/auth';
 import { ReadOnlyBanner } from '@/features/dashboard';
+import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import {
+  DeleteDialog,
   PostCard,
-  PostFilters,
+  PostPreviewDialog,
+  PostsEmptyState,
+  PostsSkeleton,
+  PostsToolbar,
   deletePost,
   duplicatePost,
   getPost,
-  publishNow,
   type Post,
+  type PostCardAction,
   type StatusFilter,
 } from '@/features/posts';
 import {
@@ -32,6 +37,8 @@ interface PostsPageClientProps {
   role:           Role;
 }
 
+type PendingMap = Record<string, 'delete' | 'duplicate' | undefined>;
+
 export function PostsPageClient({
   initialPosts,
   initialError,
@@ -39,23 +46,32 @@ export function PostsPageClient({
   role,
 }: PostsPageClientProps) {
   const router = useRouter();
+  const { dialog, success, error: showError, setDialogOpen } = useFeedback();
 
-  const [posts,   setPosts]        = useState<Post[]>(initialPosts);
-  const [query,   setQuery]        = useState('');
-  const [status,  setStatus]       = useState<StatusFilter>('all');
-  const [error,   setError]        = useState<string | null>(initialError);
+  // ── Feed state ────────────────────────────────────────────────────────────
+  const [posts,         setPosts]         = useState<Post[]>(initialPosts);
+  const [query,         setQuery]         = useState('');
+  const [status,        setStatus]        = useState<StatusFilter>('all');
+  const [pending,       setPending]       = useState<PendingMap>({});
+  const [confirmDelete, setConfirmDelete] = useState<Post | null>(null);
+  const [previewPost,   setPreviewPost]   = useState<Post | null>(null);
+  const [isRefreshing,  startRefresh]     = useTransition();
 
-  const canCreate  = canCreatePost(role);
-  const canEditAny = canEditPost(role);
-  const canDelAny  = canDeletePost(role);
-  const adminUser  = isAdmin(role);
+  const canCreate    = canCreatePost(role);
+  const canEditAny   = canEditPost(role);
+  const canDeleteAny = canDeletePost(role);
+  const adminUser    = isAdmin(role);
 
-  // Caller can manage post P if they're admin or own the post AND have the
-  // generic permission.
-  function canManagePost(p: Post) {
-    if (!canEditAny && !canDelAny) return false;
-    return adminUser || p.user_id === currentUserId;
-  }
+  // ── Initial load: surface SSR error via dialog (don't break page) ─────────
+  useEffect(() => {
+    if (initialError) {
+      showError({
+        title:       'Could not load posts',
+        description: 'Please refresh the page. If the problem continues, check your connection or contact an admin.',
+      });
+      console.error('[posts] initial load error:', initialError);
+    }
+  }, [initialError, showError]);
 
   // ── Realtime — keep the feed live ─────────────────────────────────────────
   useEffect(() => {
@@ -70,7 +86,7 @@ export function PostsPageClient({
             setPosts((prev) => prev.filter((p) => p.id !== oldId));
             return;
           }
-          // INSERT or UPDATE — refetch with joins so author/platforms are populated
+          // INSERT / UPDATE — refetch with joins so author/platforms/media populate.
           const newId = (payload.new as { id: string }).id;
           try {
             const fresh = await getPost(newId);
@@ -82,7 +98,7 @@ export function PostsPageClient({
                 : [fresh, ...prev];
             });
           } catch {
-            // RLS may hide the row from this user — ignore silently
+            // RLS may hide the row from this user — ignore silently.
           }
         },
       )
@@ -93,99 +109,148 @@ export function PostsPageClient({
     };
   }, []);
 
+  // ── Permissions per-post ──────────────────────────────────────────────────
+  // Editors can manage their own; admin can manage all; viewers can manage none.
+  const canManagePost = useCallback(
+    (p: Post): boolean => {
+      if (!canEditAny && !canDeleteAny) return false;
+      return adminUser || p.user_id === currentUserId;
+    },
+    [adminUser, canEditAny, canDeleteAny, currentUserId],
+  );
+
   // ── Derived view ──────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let xs = posts;
     if (status !== 'all') xs = xs.filter((p) => p.status === status);
     const q = query.trim().toLowerCase();
     if (q) {
-      xs = xs.filter(
-        (p) =>
-          p.content.toLowerCase().includes(q) ||
-          (p.author?.name ?? '').toLowerCase().includes(q) ||
-          (p.author?.email ?? '').toLowerCase().includes(q),
-      );
+      xs = xs.filter((p) => p.content.toLowerCase().includes(q));
     }
     return xs;
   }, [posts, query, status]);
 
-  const counts = useMemo(
+  const counts: Partial<Record<StatusFilter, number>> = useMemo(
     () => ({
-      all:       posts.length,
-      published: posts.filter((p) => p.status === 'published').length,
-      scheduled: posts.filter((p) => p.status === 'scheduled').length,
-      draft:     posts.filter((p) => p.status === 'draft').length,
+      all:        posts.length,
+      draft:      posts.filter((p) => p.status === 'draft').length,
+      scheduled:  posts.filter((p) => p.status === 'scheduled').length,
+      publishing: posts.filter((p) => p.status === 'publishing').length,
+      published:  posts.filter((p) => p.status === 'published').length,
+      failed:     posts.filter((p) => p.status === 'failed').length,
     }),
     [posts],
   );
 
-  // ── Actions (optimistic with rollback) ────────────────────────────────────
+  // ── Mutations ─────────────────────────────────────────────────────────────
+  const markPending = useCallback(
+    (id: string, kind: PendingMap[string]) =>
+      setPending((prev) => {
+        const next: PendingMap = { ...prev };
+        if (kind) next[id] = kind;
+        else delete next[id];
+        return next;
+      }),
+    [],
+  );
 
-  async function handleDelete(post: Post) {
-    if (typeof window !== 'undefined') {
-      const ok = window.confirm('Delete this post? This cannot be undone.');
-      if (!ok) return;
-    }
+  const handleConfirmDelete = useCallback(async () => {
+    if (!confirmDelete) return;
+    const target = confirmDelete;
+    markPending(target.id, 'delete');
     const previous = posts;
-    setPosts((prev) => prev.filter((p) => p.id !== post.id));
+    // Optimistic remove
+    setPosts((prev) => prev.filter((p) => p.id !== target.id));
     try {
-      await deletePost(post.id);
+      await deletePost(target.id);
+      success({
+        title: 'Post deleted',
+        description: 'The post has been permanently removed.',
+      });
+      setConfirmDelete(null);
     } catch (err) {
       console.error('[posts] delete failed:', err);
+      // Rollback
       setPosts(previous);
-      setError(err instanceof Error ? err.message : 'Failed to delete post.');
+      showError({
+        title:       'Could not delete post',
+        description: 'Something went wrong while deleting. Please try again.',
+      });
+    } finally {
+      markPending(target.id, undefined);
     }
-  }
+  }, [confirmDelete, posts, markPending, success, showError]);
 
-  async function handlePublishNow(post: Post) {
-    const previous = posts;
-    const optimistic: Post = { ...post, status: 'published', scheduled_at: null };
-    setPosts((prev) => prev.map((p) => (p.id === post.id ? optimistic : p)));
-    try {
-      const fresh = await publishNow(post.id);
-      setPosts((prev) => prev.map((p) => (p.id === fresh.id ? fresh : p)));
-    } catch (err) {
-      console.error('[posts] publishNow failed:', err);
-      setPosts(previous);
-      setError(err instanceof Error ? err.message : 'Failed to publish post.');
-    }
-  }
+  const handleDuplicate = useCallback(
+    async (post: Post) => {
+      markPending(post.id, 'duplicate');
+      try {
+        const fresh = await duplicatePost(post);
+        setPosts((prev) =>
+          prev.some((p) => p.id === fresh.id) ? prev : [fresh, ...prev],
+        );
+        success({
+          title:       'Post duplicated',
+          description: 'A draft copy is ready to edit.',
+        });
+      } catch (err) {
+        console.error('[posts] duplicate failed:', err);
+        showError({
+          title:       'Could not duplicate post',
+          description: 'Something went wrong while duplicating. Please try again.',
+        });
+      } finally {
+        markPending(post.id, undefined);
+      }
+    },
+    [markPending, success, showError],
+  );
 
-  async function handleDuplicate(post: Post) {
-    try {
-      const fresh = await duplicatePost(post);
-      setPosts((prev) =>
-        prev.some((p) => p.id === fresh.id) ? prev : [fresh, ...prev],
-      );
-    } catch (err) {
-      console.error('[posts] duplicate failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to duplicate post.');
-    }
-  }
+  // ── Single dispatcher fed to every PostCard (stable, memo-safe) ───────────
+  const handleAction = useCallback(
+    (action: PostCardAction, post: Post) => {
+      switch (action) {
+        case 'preview':   setPreviewPost(post); break;
+        case 'edit':      router.push(`/dashboard/posts/${post.id}/edit`); break;
+        case 'delete':    setConfirmDelete(post); break;
+        case 'duplicate': void handleDuplicate(post); break;
+      }
+    },
+    [router, handleDuplicate],
+  );
 
-  function handleEdit(post: Post) {
-    router.push(`/dashboard/posts/${post.id}/edit`);
-  }
+  const handleClearFilters = useCallback(() => {
+    setQuery('');
+    setStatus('all');
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    startRefresh(() => {
+      router.refresh();
+    });
+  }, [router]);
 
   // ── Render ────────────────────────────────────────────────────────────────
+  const hasFilter  = status !== 'all' || query.trim() !== '';
+  const isDeleting = confirmDelete ? pending[confirmDelete.id] === 'delete' : false;
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Header */}
+      {/* ─ Header ─────────────────────────────────────────────────────────── */}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
             Posts
           </h1>
           <p className="text-sm text-gray-500">
-            All your content in one place.
+            Browse, edit, and schedule everything across your social platforms.
           </p>
         </div>
 
         {canCreate && (
           <Link
             href="/dashboard/posts/compose"
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#7A0000] px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-[#5A0000]"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#7A0000] px-4 text-sm font-medium text-white shadow-sm transition hover:bg-[#5A0000]"
           >
             <Plus size={14} aria-hidden />
             Create Post
@@ -195,38 +260,40 @@ export function PostsPageClient({
 
       {!canCreate && <ReadOnlyBanner />}
 
-      {/* Error banner */}
-      {error && (
-        <div
-          role="alert"
-          className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-        >
-          <span>{error}</span>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="text-xs font-medium text-red-600 hover:underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {/* Filters */}
-      <PostFilters
+      {/* ─ Toolbar ────────────────────────────────────────────────────────── */}
+      <PostsToolbar
         query={query}
         status={status}
         onQueryChange={setQuery}
         onStatusChange={setStatus}
         counts={counts}
+        trailing={
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            aria-label="Refresh posts"
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-60"
+          >
+            <RefreshCw
+              size={14}
+              className={isRefreshing ? 'animate-spin' : ''}
+              aria-hidden
+            />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+        }
       />
 
-      {/* Feed */}
-      {filtered.length === 0 ? (
-        <EmptyState
+      {/* ─ Body ───────────────────────────────────────────────────────────── */}
+      {isRefreshing && posts.length === 0 ? (
+        <PostsSkeleton />
+      ) : filtered.length === 0 ? (
+        <PostsEmptyState
           totalPosts={posts.length}
-          hasFilter={status !== 'all' || query.trim() !== ''}
+          hasFilter={hasFilter}
           canCreate={canCreate}
+          onClearFilters={hasFilter ? handleClearFilters : undefined}
         />
       ) : (
         <section
@@ -239,68 +306,37 @@ export function PostsPageClient({
               <PostCard
                 key={post.id}
                 post={post}
-                canManage={manage}
-                onEdit={manage && canEditAny ? () => handleEdit(post) : undefined}
-                onDelete={manage && canDelAny ? () => handleDelete(post) : undefined}
-                onDuplicate={manage && canCreate ? () => handleDuplicate(post) : undefined}
-                onPublishNow={
-                  manage && canEditAny && post.status !== 'published'
-                    ? () => handlePublishNow(post)
-                    : undefined
-                }
+                pending={pending[post.id] ?? null}
+                canEdit={manage && canEditAny}
+                canDelete={manage && canDeleteAny}
+                canDuplicate={manage && canCreate}
+                canPreview
+                onAction={handleAction}
               />
             );
           })}
         </section>
       )}
-    </div>
-  );
-}
 
-// ── Empty state ─────────────────────────────────────────────────────────────
-
-function EmptyState({
-  totalPosts,
-  hasFilter,
-  canCreate,
-}: {
-  totalPosts: number;
-  hasFilter:  boolean;
-  canCreate:  boolean;
-}) {
-  if (totalPosts > 0 && hasFilter) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center">
-        <p className="text-sm font-medium text-gray-900">No posts match your filters.</p>
-        <p className="mt-1 text-sm text-gray-500">Try clearing the search or status.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center">
-      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-        <FilePlus2 size={20} className="text-gray-400" aria-hidden />
-      </span>
-      <p className="mt-4 text-sm font-medium text-gray-900">No posts yet.</p>
-      {canCreate ? (
-        <>
-          <p className="mt-1 text-sm text-gray-500">
-            Create your first post to get started.
-          </p>
-          <Link
-            href="/dashboard/posts/compose"
-            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#7A0000] px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-[#5A0000]"
-          >
-            <Plus size={14} aria-hidden />
-            Create Post
-          </Link>
-        </>
-      ) : (
-        <p className="mt-1 text-sm text-gray-500">
-          When content is published it&apos;ll appear here.
-        </p>
-      )}
+      {/* ─ Feedback layer ─────────────────────────────────────────────────── */}
+      <AppToast />
+      <AppDialog state={dialog} onOpenChange={setDialogOpen} />
+      <DeleteDialog
+        open={confirmDelete !== null}
+        itemLabel={confirmDelete?.content || undefined}
+        isPending={isDeleting}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setConfirmDelete(null);
+        }}
+        onConfirm={handleConfirmDelete}
+      />
+      <PostPreviewDialog
+        post={previewPost}
+        open={previewPost !== null}
+        onOpenChange={(open) => {
+          if (!open) setPreviewPost(null);
+        }}
+      />
     </div>
   );
 }

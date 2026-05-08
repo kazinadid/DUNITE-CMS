@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
-import type { Post, PostStatus } from '@/features/posts';
+import type { Post, WritablePostStatus } from '@/features/posts';
 import { supabase } from '@/lib/supabaseClient';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -322,6 +322,123 @@ async function savePostMedia({
   }
 }
 
+interface SavePostWorkflowInput {
+  isEdit: boolean;
+  initialPostId?: string;
+  userId: string;
+  content: string;
+  status: WritablePostStatus;
+  scheduledIso: string | null;
+  platforms: PlatformId[];
+  file: File | null;
+}
+
+interface SavePostWorkflowResult {
+  postId: string;
+  createdNewPost: boolean;
+}
+
+async function savePostWithAssets({
+  isEdit,
+  initialPostId,
+  userId,
+  content,
+  status,
+  scheduledIso,
+  platforms,
+  file,
+}: SavePostWorkflowInput): Promise<SavePostWorkflowResult> {
+  let postId: string | null = null;
+  let createdNewPost = false;
+
+  // When the user publishes immediately, stamp `published_at` so the feed can
+  // show real "Posted X ago" times. Drafts/schedules clear it.
+  const publishedAtIso = status === 'published' ? new Date().toISOString() : null;
+
+  try {
+    if (isEdit && initialPostId) {
+      const { data, error } = await supabase
+        .from('posts')
+        .update({
+          content:      content.trim(),
+          status,
+          scheduled_at: scheduledIso,
+          published_at: publishedAtIso,
+        })
+        .eq('id', initialPostId)
+        .select('id')
+        .single();
+      if (error) throw new StepError('Updating post', error);
+      postId = data.id;
+
+      const { error: delErr } = await supabase
+        .from('post_platforms')
+        .delete()
+        .eq('post_id', postId);
+      if (delErr) throw new StepError('Clearing previous platforms', delErr);
+    } else {
+      const { data, error } = await supabase
+        .from('posts')
+        .insert({
+          user_id:      userId,
+          content:      content.trim(),
+          status,
+          scheduled_at: scheduledIso,
+          published_at: publishedAtIso,
+        })
+        .select('id')
+        .single();
+      if (error) throw new StepError('Saving post', error);
+      postId = data.id;
+      createdNewPost = true;
+    }
+
+    console.log('[compose] post saved with id:', postId);
+
+    if (platforms.length > 0) {
+      const { error } = await supabase
+        .from('post_platforms')
+        .insert(platforms.map((p) => ({ post_id: postId!, platform: p })));
+      if (error) throw new StepError('Saving platforms', error);
+    }
+
+    if (file) {
+      if (!postId) {
+        throw new StepError('Saving media record', 'Post was not saved before media upload.');
+      }
+
+      await savePostMedia({
+        postId,
+        userId,
+        file,
+      });
+    }
+
+    return { postId: postId!, createdNewPost };
+  } catch (err) {
+    if (createdNewPost && postId) {
+      console.warn('[compose] rolling back orphan post', postId);
+      const { error: cleanupError } = await supabase
+        .from('posts')
+        .delete()
+        .eq('id', postId);
+      if (cleanupError) {
+        logError('Orphan post cleanup', cleanupError);
+      }
+    }
+
+    throw err;
+  }
+}
+
+function saveDraft(input: Omit<SavePostWorkflowInput, 'status' | 'scheduledIso'>) {
+  return savePostWithAssets({
+    ...input,
+    status: 'draft',
+    scheduledIso: null,
+  });
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function ComposeForm({ initialPost }: ComposeFormProps) {
@@ -330,6 +447,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
   const {
     dialog,
     success: showSuccess,
+    successDialog: showSuccessDialog,
     error: showError,
     setDialogOpen,
   } = useFeedback();
@@ -398,9 +516,29 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     setScheduledAt('');
   }
 
+  function showModalFeedback({
+    variant,
+    title,
+    description,
+  }: {
+    variant: 'success' | 'error';
+    title: string;
+    description: string;
+  }) {
+    if (variant === 'success') {
+      showSuccessDialog({ title, description });
+      return;
+    }
+    showError({ title, description });
+  }
+
+  function isLoadingAction(action: SubmitAction) {
+    return loading && loadingAction === action;
+  }
+
   // ── Validation ────────────────────────────────────────────────────────────
   function validate(action: SubmitAction): string | null {
-    if (content.trim() === '')
+    if (action === 'publish' && content.trim() === '')
       return 'Post content cannot be empty.';
     if (content.length > MAX_CHARS)
       return `Content exceeds ${MAX_CHARS} characters.`;
@@ -424,7 +562,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     console.log('[compose] handleSubmit', { action, isEdit, content, platforms, userId });
 
     if (!userId) {
-      showError({
+      showModalFeedback({
+        variant: 'error',
         title: 'Session is not ready',
         description: 'Please wait a moment and try again.',
       });
@@ -434,7 +573,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
 
     const validationError = validate(action);
     if (validationError) {
-      showError({
+      showModalFeedback({
+        variant: 'error',
         title: 'Check your post',
         description: validationError,
       });
@@ -444,14 +584,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     setLoading(true);
     setLoadingAction(action);
 
-    // Track partial state so we can roll back a freshly-created post if a
-    // follow-up step fails.  Edit-mode never sets `createdNewPost = true`
-    // because we're updating an existing row.
-    let postId: string | null = null;
-    let createdNewPost = false;
-
     try {
-      const postStatus: PostStatus =
+      const postStatus: WritablePostStatus =
         action === 'draft'
           ? 'draft'
           : scheduleMode === 'schedule'
@@ -463,73 +597,49 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
           ? new Date(scheduledAt).toISOString()
           : null;
 
-      // ── 1. Create or update the post row ───────────────────────────────
-      if (isEdit && initialPost) {
-        const { data, error } = await supabase
-          .from('posts')
-          .update({
-            content:      content.trim(),
-            status:       postStatus,
-            scheduled_at: scheduledIso,
-          })
-          .eq('id', initialPost.id)
-          .select('id')
-          .single();
-        if (error) throw new StepError('Updating post', error);
-        postId = data.id;
-
-        // Clear existing platforms so we can re-insert the current set.
-        const { error: delErr } = await supabase
-          .from('post_platforms')
-          .delete()
-          .eq('post_id', postId);
-        if (delErr) throw new StepError('Clearing previous platforms', delErr);
-      } else {
-        const { data, error } = await supabase
-          .from('posts')
-          .insert({
-            user_id:      userId,
-            content:      content.trim(),
-            status:       postStatus,
-            scheduled_at: scheduledIso,
-          })
-          .select('id')
-          .single();
-        if (error) throw new StepError('Saving post', error);
-        postId = data.id;
-        createdNewPost = true;
-      }
-
-      console.log('[compose] post saved with id:', postId);
-
-      // ── 2. Insert platforms ───────────────────────────────────────────
-      if (platforms.length > 0) {
-        const { error } = await supabase
-          .from('post_platforms')
-          .insert(platforms.map((p) => ({ post_id: postId!, platform: p })));
-        if (error) throw new StepError('Saving platforms', error);
-      }
-
-      // ── 3. Upload + record media ──────────────────────────────────────
-      if (file) {
-        if (!postId) {
-          throw new StepError('Saving media record', 'Post was not saved before media upload.');
-        }
-
-        await savePostMedia({
-          postId,
+      if (action === 'draft') {
+        await saveDraft({
+          isEdit,
+          initialPostId: initialPost?.id,
           userId,
+          content,
+          platforms,
           file,
         });
 
+        showModalFeedback({
+          variant: 'success',
+          title: isEdit ? 'Draft updated' : 'Draft saved',
+          description: 'Your draft is saved and will appear in Posts.',
+        });
+
+        if (isEdit) {
+          setTimeout(() => router.push('/dashboard/posts'), 900);
+        } else {
+          resetForm();
+        }
+        return;
+      }
+
+      await savePostWithAssets({
+        isEdit,
+        initialPostId: initialPost?.id,
+        userId,
+        content,
+        status: postStatus,
+        scheduledIso,
+        platforms,
+        file,
+      });
+
+      if (file) {
         showSuccess({
           title: 'Media uploaded',
           description: 'Your media file was attached to the post.',
         });
       }
 
-      // ── 4. Success ────────────────────────────────────────────────────
-      const messages: Record<PostStatus, string> = {
+      const messages: Record<WritablePostStatus, string> = {
         published: isEdit ? 'Post updated and published.'                           : 'Post published successfully!',
         scheduled: `Post scheduled for ${new Date(scheduledAt).toLocaleString()}.`,
         draft:     isEdit ? 'Draft updated.'                                        : 'Draft saved.',
@@ -553,22 +663,9 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
       const cause = err instanceof StepError ? err.cause : err;
       logError(step, cause);
 
-      // ── Roll back orphan post on partial failure ─────────────────────
-      // (Only when we created a fresh post in this call.  Edit mode is left
-      //  alone because the row existed before the user touched it.)
-      if (createdNewPost && postId) {
-        console.warn('[compose] rolling back orphan post', postId);
-        const { error: cleanupError } = await supabase
-          .from('posts')
-          .delete()
-          .eq('id', postId);
-        if (cleanupError) {
-          logError('Orphan post cleanup', cleanupError);
-        }
-      }
-
       console.error('[compose] user-safe error:', describeError(step, cause));
-      showError({
+      showModalFeedback({
+        variant: 'error',
         title: getActionErrorTitle(action, scheduleMode),
         description: getSafeErrorMessage(step),
       });
@@ -582,7 +679,7 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
   const charsLeft = MAX_CHARS - content.length;
   const overLimit = charsLeft < 0;
   const nearLimit = charsLeft >= 0 && charsLeft <= 50;
-  const canDraft  = !loading && content.trim() !== '';
+  const canDraft  = !loading && !overLimit;
 
   const minDatetime = new Date(Date.now() + MIN_LEAD_MS)
     .toISOString()
@@ -593,8 +690,8 @@ export function ComposeForm({ initialPost }: ComposeFormProps) {
     ? 'Update content, platforms, or scheduling.'
     : 'Compose and schedule content across platforms.';
   const isScheduling = scheduleMode === 'schedule';
-  const primaryLoading = loading && loadingAction === 'publish';
-  const draftLoading = loading && loadingAction === 'draft';
+  const primaryLoading = isLoadingAction('publish');
+  const draftLoading = isLoadingAction('draft');
   const primaryLabel =
     primaryLoading
       ? (isScheduling ? 'Scheduling…' : isEdit ? 'Saving…' : 'Publishing…')

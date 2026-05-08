@@ -1,43 +1,7 @@
 import { supabase } from '@/lib/supabaseClient';
 
-import type { Post, PostStatus } from '../types';
-
-// ── Shared select expression ────────────────────────────────────────────────
-//
-// We always read author + platforms so the UI can render a fully-formed card
-// without round-trips.  RLS on `posts` is the security boundary — viewers can
-// SELECT, only writers can INSERT/UPDATE/DELETE (see migration 0001_rbac.sql).
-const POST_SELECT = `
-  id, user_id, content, status, scheduled_at, created_at, updated_at,
-  author:users!posts_user_id_fkey ( id, name, email ),
-  post_platforms ( platform )
-`;
-
-interface RawPost {
-  id: string;
-  user_id: string;
-  content: string;
-  status: PostStatus;
-  scheduled_at: string | null;
-  created_at: string;
-  updated_at: string;
-  author: { id: string; name: string | null; email: string } | null;
-  post_platforms: { platform: string }[] | null;
-}
-
-function mapRow(row: RawPost): Post {
-  return {
-    id:           row.id,
-    user_id:      row.user_id,
-    content:      row.content,
-    status:       row.status,
-    scheduled_at: row.scheduled_at,
-    created_at:   row.created_at,
-    updated_at:   row.updated_at,
-    author:       row.author,
-    platforms:    (row.post_platforms ?? []).map((p) => p.platform),
-  };
-}
+import { POST_SELECT, mapPostRow, type RawPostRow } from '../queries';
+import type { Post } from '../types';
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 
@@ -48,7 +12,7 @@ export async function listPosts(): Promise<Post[]> {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return ((data ?? []) as unknown as RawPost[]).map(mapRow);
+  return ((data ?? []) as unknown as RawPostRow[]).map(mapPostRow);
 }
 
 export async function getPost(id: string): Promise<Post | null> {
@@ -59,7 +23,7 @@ export async function getPost(id: string): Promise<Post | null> {
     .maybeSingle();
 
   if (error) throw error;
-  return data ? mapRow(data as unknown as RawPost) : null;
+  return data ? mapPostRow(data as unknown as RawPostRow) : null;
 }
 
 // ── Writes ───────────────────────────────────────────────────────────────────
@@ -69,17 +33,45 @@ export async function deletePost(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** Publish a scheduled or draft post immediately. */
+/**
+ * Publish a post immediately. Sets status, clears scheduled_at, stamps
+ * published_at to now() so the feed can render real "Posted X ago" times.
+ *
+ * Caller-side RBAC: admin only. The DB enforces the same via RLS.
+ */
 export async function publishNow(id: string): Promise<Post> {
   const { data, error } = await supabase
     .from('posts')
-    .update({ status: 'published', scheduled_at: null })
+    .update({
+      status:       'published',
+      scheduled_at: null,
+      published_at: new Date().toISOString(),
+    })
     .eq('id', id)
     .select(POST_SELECT)
     .single();
 
   if (error) throw error;
-  return mapRow(data as unknown as RawPost);
+  return mapPostRow(data as unknown as RawPostRow);
+}
+
+/**
+ * Reset a `failed` post back to `draft` so the author can edit + retry.
+ * Clears `published_at` because the original publish never landed.
+ */
+export async function resetToDraft(id: string): Promise<Post> {
+  const { data, error } = await supabase
+    .from('posts')
+    .update({
+      status:       'draft',
+      published_at: null,
+    })
+    .eq('id', id)
+    .select(POST_SELECT)
+    .single();
+
+  if (error) throw error;
+  return mapPostRow(data as unknown as RawPostRow);
 }
 
 /** Clone an existing post into a new draft owned by the same user. */

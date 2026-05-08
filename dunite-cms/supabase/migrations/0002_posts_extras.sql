@@ -29,11 +29,22 @@ create index if not exists post_platforms_post_id_idx on public.post_platforms (
 create table if not exists public.media (
   id         uuid primary key default gen_random_uuid(),
   post_id    uuid not null references public.posts(id) on delete cascade,
-  url        text not null,
+  url        text,
   created_at timestamptz not null default now()
 );
 
+-- Bring the table up to the schema the composer/posts feed expect.
+-- Idempotent ALTERs — safe to run repeatedly.
+alter table public.media add column if not exists user_id      uuid references public.users(id) on delete set null;
+alter table public.media add column if not exists file_url     text;
+alter table public.media add column if not exists file_type    text;
+alter table public.media add column if not exists file_name    text;
+alter table public.media add column if not exists mime_type    text;
+alter table public.media add column if not exists size         bigint;
+alter table public.media add column if not exists storage_path text;
+
 create index if not exists media_post_id_idx on public.media (post_id);
+create index if not exists media_user_id_idx on public.media (user_id);
 
 
 -- ── 3. RLS — enable ─────────────────────────────────────────────────────────

@@ -8,11 +8,16 @@ import type { Role } from '@/features/auth/types';
  * IMPORTANT: this file is the *frontend* gate.  The DB is the actual
  * security boundary — see `supabase/policies.sql`.  Never trust these
  * functions for data access on their own.
+ *
+ * Permission notes:
+ *   - posts.manage  : create/edit/delete posts (drafts + scheduled)
+ *   - posts.publish : *directly* push a post to "published" (now). Editors
+ *                     can compose and schedule but never bypass review.
  */
 
 const PERMISSIONS = {
-  admin:  ['posts.manage', 'media.upload', 'users.manage', 'social.manage'],
-  editor: ['posts.manage', 'media.upload'],
+  admin:  ['posts.manage', 'posts.publish', 'media.upload', 'users.manage', 'social.manage'],
+  editor: ['posts.manage',                  'media.upload'],
   viewer: [],
 } as const satisfies Record<Role, readonly string[]>;
 
@@ -47,6 +52,8 @@ export function hasPermission(
 export const canCreatePost     = (r: Role | null | undefined) => hasPermission(r, 'posts.manage');
 export const canEditPost       = (r: Role | null | undefined) => hasPermission(r, 'posts.manage');
 export const canDeletePost     = (r: Role | null | undefined) => hasPermission(r, 'posts.manage');
+/** Direct publish (skip schedule, push to "published" right now). Admin only. */
+export const canPublishPost    = (r: Role | null | undefined) => hasPermission(r, 'posts.publish');
 export const canUploadMedia    = (r: Role | null | undefined) => hasPermission(r, 'media.upload');
 export const canManageUsers    = (r: Role | null | undefined) => hasPermission(r, 'users.manage');
 export const canManageSocial   = (r: Role | null | undefined) => hasPermission(r, 'social.manage');

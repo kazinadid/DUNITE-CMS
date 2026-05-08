@@ -19,6 +19,7 @@ const INITIAL_DIALOG: AppDialogState = {
   open: false,
   title: '',
   description: '',
+  variant: 'error',
 };
 
 export function useFeedback() {
@@ -29,7 +30,11 @@ export function useFeedback() {
   }, []);
 
   const error = useCallback(({ title, description }: DialogOptions) => {
-    setDialog({ open: true, title, description });
+    setDialog({ open: true, title, description, variant: 'error' });
+  }, []);
+
+  const successDialog = useCallback(({ title, description }: DialogOptions) => {
+    setDialog({ open: true, title, description, variant: 'success' });
   }, []);
 
   const closeDialog = useCallback(() => {
@@ -43,6 +48,7 @@ export function useFeedback() {
   return {
     dialog,
     success,
+    successDialog,
     error,
     closeDialog,
     setDialogOpen,
