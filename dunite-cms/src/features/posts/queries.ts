@@ -18,7 +18,7 @@ export const POST_SELECT = `
   id, user_id, content, status, scheduled_at, published_at, created_at, updated_at,
   author:users!posts_user_id_fkey ( id, name, email ),
   post_platforms ( platform ),
-  media ( id, file_url, file_type, file_name, mime_type, storage_path )
+  media ( id, file_url, file_type, file_name, mime_type, storage_path, order_index )
 ` as const;
 
 export interface RawPostRow {
@@ -40,6 +40,7 @@ export interface RawPostRow {
         file_name: string | null;
         mime_type: string | null;
         storage_path: string | null;
+        order_index: number | null;
       }[]
     | null;
 }
@@ -66,6 +67,8 @@ export function mapPostRow(row: RawPostRow): Post {
         file_name:    m.file_name ?? '',
         mime_type:    m.mime_type ?? '',
         storage_path: m.storage_path ?? '',
-      })),
+        order_index: m.order_index ?? 0,
+      }))
+      .sort((a, b) => a.order_index - b.order_index),
   };
 }

@@ -24,6 +24,7 @@ export interface PostMedia {
   file_name: string;
   mime_type: string;
   storage_path: string;
+  order_index: number;
 }
 
 export interface Post {

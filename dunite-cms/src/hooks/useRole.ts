@@ -32,7 +32,7 @@ export function useRole() {
         } else {
           setRole(data?.role as Role);
         }
-      } catch (err) {
+      } catch {
         setError('Something went wrong');
       } finally {
         setLoading(false);
