@@ -7,6 +7,7 @@ import {
   Settings,
   FileText,
   Users,
+  Upload,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -25,6 +26,12 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Notifications', href: '/dashboard/notifications', icon: Bell },
   { label: 'Activity',  href: '/dashboard/activity', icon: History },
   { label: 'Posts',     href: '/dashboard/posts',    icon: FileText },
+  {
+    label: 'Import',
+    href: '/dashboard/imports',
+    icon: Upload,
+    roles: ['admin', 'editor'],
+  },
   { label: 'Calendar',  href: '/dashboard/calendar', icon: Calendar },
   { label: 'Media',     href: '/dashboard/media',    icon: ImageIcon },
   { label: 'Users',     href: '/dashboard/users',    icon: Users,    roles: ['admin'] },

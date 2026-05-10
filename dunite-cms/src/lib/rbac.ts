@@ -16,8 +16,8 @@ import type { Role } from '@/features/auth/types';
  */
 
 const PERMISSIONS = {
-  admin:  ['posts.manage', 'posts.publish', 'media.upload', 'users.manage', 'social.manage'],
-  editor: ['posts.manage',                  'media.upload'],
+  admin:  ['posts.manage', 'posts.publish', 'media.upload', 'users.manage', 'social.manage', 'imports.manage'],
+  editor: ['posts.manage',                  'media.upload', 'imports.manage'],
   viewer: [],
 } as const satisfies Record<Role, readonly string[]>;
 
@@ -55,6 +55,8 @@ export const canDeletePost     = (r: Role | null | undefined) => hasPermission(r
 /** Direct publish (skip schedule, push to "published" right now). Admin only. */
 export const canPublishPost    = (r: Role | null | undefined) => hasPermission(r, 'posts.publish');
 export const canUploadMedia    = (r: Role | null | undefined) => hasPermission(r, 'media.upload');
+/** Batch campaign file parsing / staged import (editors + admins). */
+export const canRunBatchImport = (r: Role | null | undefined) => hasPermission(r, 'imports.manage');
 export const canManageUsers    = (r: Role | null | undefined) => hasPermission(r, 'users.manage');
 export const canManageSocial   = (r: Role | null | undefined) => hasPermission(r, 'social.manage');
 
