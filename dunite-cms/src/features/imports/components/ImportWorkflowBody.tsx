@@ -23,6 +23,7 @@ import { ImportPreviewMetricsCards } from './ImportPreviewMetricsCards';
 import { ImportPreviewTable } from './ImportPreviewTable';
 import { ImportPreviewToolbar } from './ImportPreviewToolbar';
 import { ImportRowInspector } from './ImportRowInspector';
+import { ImportSchemaBlockedPanel } from './ImportSchemaBlockedPanel';
 import { ImportStagingControls } from './ImportStagingControls';
 import { ValidationSummaryBar } from './ValidationSummaryBar';
 

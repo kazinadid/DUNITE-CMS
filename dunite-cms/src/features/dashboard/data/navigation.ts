@@ -1,6 +1,7 @@
 import {
   Bell,
   Calendar,
+  ClipboardList,
   History,
   Image as ImageIcon,
   LayoutDashboard,
@@ -27,6 +28,11 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Activity',  href: '/dashboard/activity', icon: History },
   { label: 'Posts',     href: '/dashboard/posts',    icon: FileText },
   {
+    label: 'Import ops',
+    href: '/dashboard/imports/operations',
+    icon: ClipboardList,
+  },
+  {
     label: 'Import',
     href: '/dashboard/imports',
     icon: Upload,
@@ -45,5 +51,12 @@ export function visibleNavItems(role: Role | null | undefined): NavItem[] {
 
 export function isItemActive(itemHref: string, pathname: string): boolean {
   if (itemHref === '/dashboard') return pathname === '/dashboard';
+  if (itemHref === '/dashboard/imports') {
+    return pathname === '/dashboard/imports';
+  }
+  if (itemHref === '/dashboard/imports/operations') {
+    if (pathname.startsWith('/dashboard/imports/operations')) return true;
+    return /^\/dashboard\/imports\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
+  }
   return pathname === itemHref || pathname.startsWith(`${itemHref}/`);
 }

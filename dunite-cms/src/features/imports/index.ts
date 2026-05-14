@@ -20,6 +20,10 @@ export type { GroupedIssueRollup } from './lib/groupIssuesFromRows';
 export { buildImportPreviewPayload } from './preview/prepareImportPreview';
 export type { ImportPreviewPayload } from './preview/prepareImportPreview';
 export type {
+  ImportExecutionStats,
+  ImportFailureGroup,
+  ImportJobListItem,
+  ImportJobProgressPayload,
   ImportParseSummary,
   ImportSchemaFailure,
   ImportValidationSummary,
@@ -27,6 +31,14 @@ export type {
   ImportWorkflowState,
   NormalizedImportRow,
 } from './types';
+export { ImportHistoryDashboard } from './components/ImportHistoryDashboard';
+export { useImportJobProgressPoll } from './hooks/useImportJobProgressPoll';
+export { ImportOperationsDashboard } from './operations/ImportOperationsDashboard';
+export { ImportJobDetailClient } from './operations/ImportJobDetailClient';
+export { ImportManagementTable } from './operations/ImportManagementTable';
+export { ImportMetricsCards } from './operations/ImportMetricsCards';
+export { ImportStatusBadge } from './operations/importStatusBadge';
+export { QueueHealthIndicator } from './operations/queueHealthIndicator';
 
 export type { ImportCanonicalField } from './lib/importFieldSchema';
 export { validateCampaignImportHeaders } from './validation/validateImportSchema';

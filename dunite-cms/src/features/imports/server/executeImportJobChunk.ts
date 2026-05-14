@@ -2,9 +2,9 @@ import 'server-only';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
+import type { ImportExecutionStats } from '../types';
 import { getImportActor } from './importAuth';
-
-const CHUNK = 40;
+import { resolveImportChunkSize } from './importQueueConstants';
 
 export interface ExecuteImportChunkResult {
   ok: boolean;
@@ -22,9 +22,17 @@ function pickPostStatus(scheduledAt: Date | null): 'draft' | 'scheduled' {
   return 'draft';
 }
 
+type ClaimedRow = {
+  id: string;
+  parsed_data: unknown;
+  processing_state: string;
+  row_execution_retry_count?: number | null;
+};
+
 /**
- * Processes up to `CHUNK` import_rows that are still importable (valid|warning, no post).
- * Idempotent across calls until the job reaches a terminal status.
+ * Queue-safe chunk processor: claims rows via `import_rows_claim_execution_batch`
+ * (SKIP LOCKED + transient `importing` state), creates posts idempotently, and
+ * updates rolling `execution_stats` for polling UIs.
  */
 export async function executeImportJobChunkAction(jobId: string): Promise<ExecuteImportChunkResult> {
   const supabase = await createSupabaseServerClient();
@@ -41,9 +49,11 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
     };
   }
 
+  const chunkSize = resolveImportChunkSize();
+
   const { data: job, error: jobErr } = await supabase
     .from('import_jobs')
-    .select('id, status, uploaded_by')
+    .select('id, status, uploaded_by, execution_stats')
     .eq('id', jobId)
     .maybeSingle();
 
@@ -51,7 +61,21 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
     return { ok: false, message: jobErr?.message ?? 'Job not found.', finished: true, processedThisChunk: 0 };
   }
 
-  if (!['staged', 'processing'].includes(job.status as string)) {
+  if ((job.uploaded_by as string) !== user.id && role !== 'admin') {
+    return { ok: false, message: 'Forbidden.', finished: true, processedThisChunk: 0 };
+  }
+
+  if (job.status === 'staged') {
+    return {
+      ok: false,
+      message: 'Queue this import before running execution chunks.',
+      finished: true,
+      jobStatus: 'staged',
+      processedThisChunk: 0,
+    };
+  }
+
+  if (!['queued', 'processing'].includes(job.status as string)) {
     return {
       ok: false,
       message: `Job is not executable in status «${job.status}».`,
@@ -61,31 +85,46 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
     };
   }
 
-  if ((job.uploaded_by as string) !== user.id && role !== 'admin') {
-    return { ok: false, message: 'Forbidden.', finished: true, processedThisChunk: 0 };
-  }
+  await supabase.rpc('import_rows_recover_stale_claims', {
+    p_job_id: jobId,
+    p_max_age: '25 minutes',
+  });
 
-  if (job.status === 'staged') {
-    const { error: stErr } = await supabase.from('import_jobs').update({ status: 'processing' }).eq('id', jobId);
-    if (stErr) {
-      return { ok: false, message: stErr.message, finished: false, processedThisChunk: 0 };
+  if (job.status === 'queued') {
+    const { error: qErr } = await supabase
+      .from('import_jobs')
+      .update({ status: 'processing' })
+      .eq('id', jobId)
+      .eq('status', 'queued');
+    if (qErr) {
+      return { ok: false, message: qErr.message, finished: false, processedThisChunk: 0 };
     }
   }
 
-  const { data: batch, error: rowErr } = await supabase
-    .from('import_rows')
-    .select('id, parsed_data, processing_state')
-    .eq('import_job_id', jobId)
-    .in('processing_state', ['valid', 'warning'])
-    .is('post_id', null)
-    .order('row_number', { ascending: true })
-    .limit(CHUNK);
-
-  if (rowErr) {
-    return { ok: false, message: rowErr.message, finished: false, processedThisChunk: 0 };
+  const { data: jobAfter, error: afterErr } = await supabase
+    .from('import_jobs')
+    .select('status')
+    .eq('id', jobId)
+    .maybeSingle();
+  if (afterErr || jobAfter?.status !== 'processing') {
+    return {
+      ok: false,
+      message: 'Unable to acquire processing lease for this job.',
+      finished: true,
+      processedThisChunk: 0,
+    };
   }
 
-  const rows = batch ?? [];
+  const { data: claimed, error: claimErr } = await supabase.rpc('import_rows_claim_execution_batch', {
+    p_job_id: jobId,
+    p_limit: chunkSize,
+  });
+
+  if (claimErr) {
+    return { ok: false, message: claimErr.message, finished: false, processedThisChunk: 0 };
+  }
+
+  const rows = (claimed ?? []) as ClaimedRow[];
   let processed = 0;
 
   for (const row of rows) {
@@ -95,14 +134,18 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
     const platforms = Array.isArray(pd.platforms) ? (pd.platforms as string[]).filter(Boolean) : [];
     const mediaUrls = Array.isArray(pd.media_urls) ? (pd.media_urls as string[]).filter(Boolean) : [];
 
+    const prevRetries = row.row_execution_retry_count ?? 0;
+
     if (!content || platforms.length === 0) {
       await supabase
         .from('import_rows')
         .update({
           processing_state: 'failed',
           error_message: 'Missing post text or platforms for import execution.',
+          row_execution_retry_count: prevRetries + 1,
         })
-        .eq('id', row.id);
+        .eq('id', row.id)
+        .eq('processing_state', 'importing');
       continue;
     }
 
@@ -131,8 +174,10 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
         .update({
           processing_state: 'failed',
           error_message: (postErr?.message ?? 'Post insert failed').slice(0, 2000),
+          row_execution_retry_count: prevRetries + 1,
         })
-        .eq('id', row.id);
+        .eq('id', row.id)
+        .eq('processing_state', 'importing');
       continue;
     }
 
@@ -150,8 +195,10 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
         .update({
           processing_state: 'failed',
           error_message: platErr.message.slice(0, 2000),
+          row_execution_retry_count: prevRetries + 1,
         })
-        .eq('id', row.id);
+        .eq('id', row.id)
+        .eq('processing_state', 'importing');
       continue;
     }
 
@@ -166,17 +213,53 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
       });
     }
 
-    await supabase
+    const { data: linked, error: linkErr } = await supabase
       .from('import_rows')
       .update({
         post_id: postId,
         processing_state: 'imported',
         error_message: null,
       })
-      .eq('id', row.id);
+      .eq('id', row.id)
+      .eq('processing_state', 'importing')
+      .select('id')
+      .maybeSingle();
+
+    if (linkErr || !linked) {
+      await supabase.from('posts').delete().eq('id', postId);
+      await supabase
+        .from('import_rows')
+        .update({
+          processing_state: 'failed',
+          error_message: 'Concurrent import prevented double attach; post discarded.',
+          row_execution_retry_count: prevRetries + 1,
+        })
+        .eq('id', row.id)
+        .eq('processing_state', 'importing');
+    }
   }
 
   await supabase.rpc('import_jobs_recompute_row_statistics', { p_job_id: jobId });
+
+  const { data: statsRow } = await supabase.from('import_jobs').select('execution_stats').eq('id', jobId).maybeSingle();
+  const prevExec = (statsRow?.execution_stats ?? job.execution_stats ?? {}) as ImportExecutionStats;
+  const chunksDone = (prevExec.chunks_completed ?? 0) + 1;
+  const nowIso = new Date().toISOString();
+  const mergedStats: ImportExecutionStats = {
+    ...prevExec,
+    chunks_completed: chunksDone,
+    last_chunk_at: nowIso,
+    last_chunk_rows: processed,
+    last_heartbeat_at: nowIso,
+  };
+
+  await supabase
+    .from('import_jobs')
+    .update({
+      processing_heartbeat_at: nowIso,
+      execution_stats: mergedStats as unknown as Record<string, unknown>,
+    })
+    .eq('id', jobId);
 
   const { count: remCount, error: pendErr } = await supabase
     .from('import_rows')
@@ -185,11 +268,22 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
     .in('processing_state', ['valid', 'warning'])
     .is('post_id', null);
 
-  if (pendErr) {
-    return { ok: true, finished: false, processedThisChunk: processed, message: pendErr.message };
+  const { count: importingRem, error: impErr } = await supabase
+    .from('import_rows')
+    .select('*', { count: 'exact', head: true })
+    .eq('import_job_id', jobId)
+    .eq('processing_state', 'importing');
+
+  if (pendErr || impErr) {
+    return {
+      ok: true,
+      finished: false,
+      processedThisChunk: processed,
+      message: pendErr?.message ?? impErr?.message,
+    };
   }
 
-  if ((remCount ?? 0) === 0) {
+  if ((remCount ?? 0) === 0 && (importingRem ?? 0) === 0) {
     const { data: states } = await supabase.from('import_rows').select('processing_state').eq('import_job_id', jobId);
     const list = states ?? [];
     const failed = list.filter((r) => r.processing_state === 'failed').length;
@@ -199,19 +293,31 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
     if (failed > 0 && imported > 0) terminal = 'partial_success';
     else if (failed > 0 && imported === 0) terminal = 'failed';
 
+    const { data: jobFull } = await supabase
+      .from('import_jobs')
+      .select('started_at')
+      .eq('id', jobId)
+      .maybeSingle();
+    const startedAt = jobFull?.started_at ? new Date(jobFull.started_at as string).getTime() : null;
+    const durationMs =
+      startedAt != null && !Number.isNaN(startedAt) ? Math.max(0, Date.now() - startedAt) : undefined;
+
     const stats = {
+      ...mergedStats,
       processed: list.length,
       succeeded: imported,
       failed,
       skipped_duplicate: list.filter((r) => r.processing_state === 'duplicate').length,
       skipped_invalid: list.filter((r) => r.processing_state === 'invalid').length,
+      terminal_at: nowIso,
+      processing_duration_ms: durationMs,
     };
 
     await supabase
       .from('import_jobs')
       .update({
         status: terminal,
-        execution_stats: stats,
+        execution_stats: stats as unknown as Record<string, unknown>,
         error_summary:
           terminal === 'failed'
             ? 'No rows could be imported. See import_rows for row-level errors.'

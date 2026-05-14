@@ -23,12 +23,16 @@ interface ActivityPageClientProps {
   role:           Role;
   currentUserId:  string;
   initialSearch?: string;
+  initialEntityType?: string;
+  initialEntityId?: string;
 }
 
 export function ActivityPageClient({
   role,
   currentUserId,
   initialSearch,
+  initialEntityType,
+  initialEntityId,
 }: ActivityPageClientProps) {
   const [entries, setEntries]       = useState<ActivityLog[]>([]);
   const [total, setTotal]           = useState(0);
@@ -40,8 +44,8 @@ export function ActivityPageClient({
     query: initialSearch ?? '',
     userId: null,
     actionType: '',
-    entityType: '',
-    entityId: '',
+    entityType: initialEntityType?.trim() ?? '',
+    entityId: initialEntityId?.trim() ?? '',
     createdFromIso: '',
     createdToIso: '',
   });

@@ -9,7 +9,11 @@ export function assertImportOperatorRole(role: Role | null | undefined): void {
   }
 }
 
-export async function getImportActor(supabase: SupabaseClient): Promise<{ user: User; role: Role }> {
+/**
+ * Authenticated session for read-only import APIs (list, progress, diagnostics).
+ * Viewers are allowed — RLS decides which rows are visible.
+ */
+export async function getImportListSession(supabase: SupabaseClient): Promise<{ user: User; role: Role }> {
   const {
     data: { user },
     error: authErr,
@@ -21,7 +25,11 @@ export async function getImportActor(supabase: SupabaseClient): Promise<{ user: 
   if (pErr || !profile?.role) {
     throw new Error('Unable to resolve user role.');
   }
-  const role = profile.role as Role;
+  return { user, role: profile.role as Role };
+}
+
+export async function getImportActor(supabase: SupabaseClient): Promise<{ user: User; role: Role }> {
+  const { user, role } = await getImportListSession(supabase);
   assertImportOperatorRole(role);
   return { user, role };
 }
