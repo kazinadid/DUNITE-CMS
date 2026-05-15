@@ -8,10 +8,12 @@ const FILTERS: { id: StatusFilter; label: string }[] = [
   { id: 'all',        label: 'All'        },
   { id: 'draft',      label: 'Drafts'     },
   { id: 'scheduled',  label: 'Scheduled'  },
+  { id: 'queued',     label: 'Queued'     },
   { id: 'publishing', label: 'Publishing' },
   { id: 'retrying',   label: 'Retrying'   },
   { id: 'published',  label: 'Published'  },
   { id: 'failed',     label: 'Failed'     },
+  { id: 'cancelled',  label: 'Cancelled'  },
 ];
 
 interface PostsToolbarProps {

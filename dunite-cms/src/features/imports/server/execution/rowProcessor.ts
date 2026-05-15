@@ -4,11 +4,22 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { coerceUnknownToUtcDate } from '../../lib/dates';
 import { logWorkerError } from './logger';
+import {
+  fileNameFromUrl,
+  inferMediaKindFromUrl,
+  inferMimeFromUrl,
+  mergeContentWithHashtags,
+  normalizeHashtags,
+  normalizeMediaUrls,
+  normalizePlatformTokens,
+} from './rowTransforms';
 import type { ClaimedRow, RowExecutionOutcome } from './types';
 
-function pickPostStatus(scheduledAt: Date | null): 'draft' | 'scheduled' {
+type PostWritableStatus = 'queued' | 'scheduled';
+
+function pickPostStatus(scheduledAt: Date | null): PostWritableStatus {
   if (scheduledAt && scheduledAt.getTime() > Date.now()) return 'scheduled';
-  return 'draft';
+  return 'queued';
 }
 
 async function insertAttemptStart(
@@ -59,6 +70,25 @@ async function completeAttempt(
     .eq('id', params.attemptId);
 }
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+async function markRowSkipped(
+  supabase: SupabaseClient,
+  params: { rowId: string; reason: string },
+) {
+  await supabase
+    .from('import_rows')
+    .update({
+      processing_state: 'failed',
+      error_message: params.reason.slice(0, 2000),
+      last_execution_attempt_at: nowIso(),
+    })
+    .eq('id', params.rowId)
+    .eq('processing_state', 'importing');
+}
+
 async function markRowFailed(
   supabase: SupabaseClient,
   params: { rowId: string; reason: string; prevRetries: number },
@@ -69,10 +99,188 @@ async function markRowFailed(
       processing_state: 'failed',
       error_message: params.reason.slice(0, 2000),
       row_execution_retry_count: params.prevRetries + 1,
-      last_execution_attempt_at: new Date().toISOString(),
+      last_execution_attempt_at: nowIso(),
     })
     .eq('id', params.rowId)
     .eq('processing_state', 'importing');
+}
+
+interface LibraryMediaRow {
+  id: string;
+  file_url: string | null;
+  file_type: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+  storage_path: string | null;
+  thumbnail_url?: string | null;
+  thumbnail_path?: string | null;
+  size?: number | null;
+  width_px?: number | null;
+  height_px?: number | null;
+}
+
+async function ensurePublishingJobs(
+  supabase: SupabaseClient,
+  params: {
+    postId: string;
+    platforms: string[];
+    scheduledAt: string | null;
+    workerId: string;
+    sourceRowNumber: number;
+  },
+): Promise<{ publishingReady: number }> {
+  const { postId, platforms, scheduledAt, workerId, sourceRowNumber } = params;
+  const scheduleFor = scheduledAt ?? nowIso();
+
+  const rpc = await supabase.rpc('replace_publishing_jobs', { p_post_id: postId });
+  if (!rpc.error) {
+    const { data: jobs } = await supabase
+      .from('publishing_jobs')
+      .select('id')
+      .eq('post_id', postId)
+      .in('status', ['queued', 'retrying']);
+    return { publishingReady: jobs?.length ?? 0 };
+  }
+
+  const fallback = await supabase
+    .from('publishing_jobs')
+    .upsert(
+      platforms.map((platform) => ({
+        post_id: postId,
+        platform,
+        status: 'queued',
+        scheduled_for: scheduleFor,
+        last_error: null,
+      })),
+      { onConflict: 'post_id,platform' },
+    )
+    .select('id');
+  if (fallback.error) {
+    throw new Error(
+      `Publishing job queue sync failed (rpc=${rpc.error.message}; upsert=${fallback.error.message})`,
+    );
+  }
+
+  await supabase.from('publishing_logs').insert({
+    post_id: postId,
+    event_type: 'import_row_queued',
+    message: `Import row #${sourceRowNumber} produced publishing-ready jobs.`,
+    metadata: {
+      worker_id: workerId,
+      scheduled_for: scheduleFor,
+      imported_platforms: platforms,
+    },
+  });
+
+  return { publishingReady: fallback.data?.length ?? 0 };
+}
+
+async function ensureLibraryMediaRows(
+  supabase: SupabaseClient,
+  params: {
+    ownerUserId: string;
+    mediaUrls: string[];
+  },
+): Promise<Map<string, LibraryMediaRow>> {
+  const { ownerUserId, mediaUrls } = params;
+  const out = new Map<string, LibraryMediaRow>();
+  if (mediaUrls.length === 0) return out;
+
+  const { data: existing, error: existingErr } = await supabase
+    .from('media')
+    .select('id,file_url,file_type,file_name,mime_type,storage_path,thumbnail_url,thumbnail_path,size,width_px,height_px')
+    .eq('user_id', ownerUserId)
+    .eq('is_library', true)
+    .in('file_url', mediaUrls);
+  if (existingErr) {
+    throw new Error(`Failed to query reusable media rows: ${existingErr.message}`);
+  }
+  for (const row of existing ?? []) {
+    const key = String(row.file_url ?? '').trim();
+    if (!key) continue;
+    out.set(key, row as LibraryMediaRow);
+  }
+
+  const missing = mediaUrls.filter((url) => !out.has(url));
+  if (missing.length > 0) {
+    const toInsert = missing.map((url) => ({
+      post_id: null,
+      user_id: ownerUserId,
+      is_library: true,
+      url,
+      file_url: url,
+      file_name: fileNameFromUrl(url),
+      file_type: inferMediaKindFromUrl(url),
+      mime_type: inferMimeFromUrl(url),
+      storage_path: null,
+    }));
+    const inserted = await supabase
+      .from('media')
+      .insert(toInsert)
+      .select('id,file_url,file_type,file_name,mime_type,storage_path,thumbnail_url,thumbnail_path,size,width_px,height_px');
+    if (inserted.error) {
+      throw new Error(`Library media insert failed: ${inserted.error.message}`);
+    }
+    for (const row of inserted.data ?? []) {
+      const key = String(row.file_url ?? '').trim();
+      if (!key) continue;
+      out.set(key, row as LibraryMediaRow);
+    }
+  }
+
+  return out;
+}
+
+async function attachMediaToPost(
+  supabase: SupabaseClient,
+  params: {
+    postId: string;
+    ownerUserId: string;
+    urls: string[];
+    libraryRows: Map<string, LibraryMediaRow>;
+  },
+): Promise<number> {
+  const { postId, ownerUserId, urls, libraryRows } = params;
+  if (urls.length === 0) return 0;
+
+  const { data: existingOnPost, error: existingErr } = await supabase
+    .from('media')
+    .select('file_url')
+    .eq('post_id', postId)
+    .in('file_url', urls);
+  if (existingErr) {
+    throw new Error(`Failed checking existing post media: ${existingErr.message}`);
+  }
+  const existingSet = new Set((existingOnPost ?? []).map((m) => String(m.file_url ?? '')));
+  const toAttach = urls.filter((url) => !existingSet.has(url));
+  if (toAttach.length === 0) return 0;
+
+  const inserts = toAttach.map((url, index) => {
+    const src = libraryRows.get(url);
+    return {
+      post_id: postId,
+      user_id: ownerUserId,
+      is_library: false,
+      url,
+      file_url: url,
+      file_name: src?.file_name ?? fileNameFromUrl(url),
+      file_type: src?.file_type ?? inferMediaKindFromUrl(url),
+      mime_type: src?.mime_type ?? inferMimeFromUrl(url),
+      storage_path: src?.storage_path ?? null,
+      thumbnail_url: src?.thumbnail_url ?? null,
+      thumbnail_path: src?.thumbnail_path ?? null,
+      size: src?.size ?? null,
+      width_px: src?.width_px ?? null,
+      height_px: src?.height_px ?? null,
+      order_index: index,
+    };
+  });
+
+  const { error } = await supabase.from('media').insert(inserts);
+  if (error) {
+    throw new Error(`Post media attach failed: ${error.message}`);
+  }
+  return inserts.length;
 }
 
 export async function processClaimedRow(
@@ -99,19 +307,41 @@ export async function processClaimedRow(
   });
 
   try {
-    const content = String(parsed.content ?? parsed.body ?? '').trim();
-    const platforms = Array.isArray(parsed.platforms) ? parsed.platforms.map(String).filter(Boolean) : [];
-    const mediaUrls = Array.isArray(parsed.media_urls) ? parsed.media_urls.map(String).filter(Boolean) : [];
+    const rawContent = String(parsed.content ?? parsed.body ?? '').trim();
+    const normalizedPlatforms = normalizePlatformTokens(parsed.platforms);
+    const platforms = normalizedPlatforms.platforms;
+    const hashtags = normalizeHashtags(parsed.hashtags, rawContent);
+    const content = mergeContentWithHashtags(rawContent, hashtags);
+    const mediaUrls = normalizeMediaUrls(parsed.media_urls).slice(0, 24);
 
-    if (!content || platforms.length === 0) {
+    if (!content) {
       const reason = 'Missing post text or platforms for import execution.';
       await markRowFailed(supabase, { rowId: row.id, reason, prevRetries });
       await completeAttempt(supabase, { attemptId, status: 'failed', errorMessage: reason });
       return { rowId: row.id, state: 'failed', reason };
     }
+    if (platforms.length === 0) {
+      const reason =
+        normalizedPlatforms.unknownTokens.length > 0
+          ? `No supported platforms after normalization. Unknown: ${normalizedPlatforms.unknownTokens.join(', ')}`
+          : 'No supported platform mappings were provided.';
+      await markRowSkipped(supabase, { rowId: row.id, reason });
+      await completeAttempt(supabase, {
+        attemptId,
+        status: 'skipped',
+        errorMessage: reason,
+        errorDetails: {
+          unknown_platform_tokens: normalizedPlatforms.unknownTokens,
+          source_row_number: row.row_number,
+        },
+      });
+      return { rowId: row.id, state: 'skipped', reason };
+    }
 
     const publishDate = parsed.publish_at ? coerceUnknownToUtcDate(parsed.publish_at) : null;
     const status = pickPostStatus(publishDate);
+    const scheduledAt = status === 'scheduled' && publishDate ? publishDate.toISOString() : null;
+    const rowStartMs = Date.now();
 
     const { data: post, error: postErr } = await supabase
       .from('posts')
@@ -119,7 +349,7 @@ export async function processClaimedRow(
         user_id: ownerUserId,
         content: content.slice(0, 100_000),
         status,
-        scheduled_at: status === 'scheduled' && publishDate ? publishDate.toISOString() : null,
+        scheduled_at: scheduledAt,
       })
       .select('id')
       .single();
@@ -157,15 +387,46 @@ export async function processClaimedRow(
       return { rowId: row.id, state: 'failed', reason };
     }
 
-    for (const mediaUrlRaw of mediaUrls.slice(0, 16)) {
-      const mediaUrl = mediaUrlRaw.trim();
-      if (!mediaUrl) continue;
-      await supabase.from('media').insert({
-        post_id: postId,
-        user_id: ownerUserId,
-        url: mediaUrl,
-        file_url: mediaUrl,
+    let mediaAttached = 0;
+    try {
+      const libraryRows = await ensureLibraryMediaRows(supabase, {
+        ownerUserId,
+        mediaUrls,
       });
+      mediaAttached = await attachMediaToPost(supabase, {
+        postId,
+        ownerUserId,
+        urls: mediaUrls,
+        libraryRows,
+      });
+    } catch (mediaErr) {
+      await supabase.from('posts').delete().eq('id', postId);
+      const reason =
+        mediaErr instanceof Error ? mediaErr.message.slice(0, 2000) : 'Media attach failed unexpectedly';
+      await markRowFailed(supabase, { rowId: row.id, reason, prevRetries });
+      await completeAttempt(supabase, { attemptId, status: 'failed', errorMessage: reason });
+      return { rowId: row.id, state: 'failed', reason };
+    }
+
+    let publishingReadyCount = 0;
+    try {
+      const publishing = await ensurePublishingJobs(supabase, {
+        postId,
+        platforms,
+        scheduledAt,
+        workerId,
+        sourceRowNumber: row.row_number,
+      });
+      publishingReadyCount = publishing.publishingReady;
+    } catch (publishQueueErr) {
+      await supabase.from('posts').delete().eq('id', postId);
+      const reason =
+        publishQueueErr instanceof Error
+          ? publishQueueErr.message.slice(0, 2000)
+          : 'Publishing queue preparation failed';
+      await markRowFailed(supabase, { rowId: row.id, reason, prevRetries });
+      await completeAttempt(supabase, { attemptId, status: 'failed', errorMessage: reason });
+      return { rowId: row.id, state: 'failed', reason };
     }
 
     const { data: linked, error: linkErr } = await supabase
@@ -174,7 +435,7 @@ export async function processClaimedRow(
         post_id: postId,
         processing_state: 'imported',
         error_message: null,
-        last_execution_attempt_at: new Date().toISOString(),
+        last_execution_attempt_at: nowIso(),
       })
       .eq('id', row.id)
       .eq('processing_state', 'importing')
@@ -188,8 +449,34 @@ export async function processClaimedRow(
       return { rowId: row.id, state: 'failed', reason };
     }
 
-    await completeAttempt(supabase, { attemptId, status: 'imported' });
-    return { rowId: row.id, state: 'imported', reason: null };
+    const elapsedMs = Math.max(1, Date.now() - rowStartMs);
+    await completeAttempt(supabase, {
+      attemptId,
+      status: 'imported',
+      errorDetails: {
+        post_id: postId,
+        normalized_platforms: platforms,
+        unknown_platform_tokens: normalizedPlatforms.unknownTokens,
+        hashtag_count: hashtags.length,
+        hashtags,
+        media_urls_received: mediaUrls.length,
+        media_attached: mediaAttached,
+        publishing_ready_jobs: publishingReadyCount,
+        scheduled_at: scheduledAt,
+        post_status: status,
+        execution_ms: elapsedMs,
+      },
+    });
+    return {
+      rowId: row.id,
+      state: 'imported',
+      reason: null,
+      postId,
+      scheduled: status === 'scheduled',
+      publishingReady: publishingReadyCount > 0,
+      platformsLinked: platforms.length,
+      mediaAttached,
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const stack = includeDevStack && e instanceof Error ? e.stack : undefined;

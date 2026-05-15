@@ -58,10 +58,12 @@ interface PostCardProps extends PostCardCapabilities {
 const STATUS_ACCENT: Record<PostStatus, string> = {
   draft:      'border-gray-200',
   scheduled:  'border-amber-200/70',
+  queued:     'border-violet-200/75',
   publishing: 'border-blue-200/70',
   published:  'border-emerald-200/70',
   failed:     'border-red-200/85',
   retrying:   'border-orange-200/80',
+  cancelled:  'border-zinc-200/80',
 };
 
 function PostCardImpl({

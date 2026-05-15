@@ -19,10 +19,12 @@ interface UserOption {
 const STATUS_OPTIONS: { value: PostStatus; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'scheduled', label: 'Scheduled' },
+  { value: 'queued', label: 'Queued' },
   { value: 'publishing', label: 'Publishing' },
   { value: 'retrying', label: 'Retrying' },
   { value: 'published', label: 'Published' },
   { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 interface CalendarFiltersProps {

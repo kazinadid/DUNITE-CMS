@@ -209,6 +209,32 @@ function RowImpl({
                   Copy job id
                 </Button>
               </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-[11px]">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Posts created</p>
+                  <p className="font-semibold tabular-nums">{Number(job.execution_stats?.posts_created ?? 0).toLocaleString()}</p>
+                </div>
+                <div className="rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-[11px]">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Scheduled</p>
+                  <p className="font-semibold tabular-nums">{Number(job.execution_stats?.scheduled_posts ?? 0).toLocaleString()}</p>
+                </div>
+                <div className="rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-[11px]">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Publishing-ready</p>
+                  <p className="font-semibold tabular-nums">{Number(job.execution_stats?.publishing_ready_posts ?? 0).toLocaleString()}</p>
+                </div>
+                <div className="rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-[11px]">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Media attached</p>
+                  <p className="font-semibold tabular-nums">{Number(job.execution_stats?.media_assets_attached ?? 0).toLocaleString()}</p>
+                </div>
+                <div className="rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-[11px]">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Platform links</p>
+                  <p className="font-semibold tabular-nums">{Number(job.execution_stats?.platform_links_created ?? 0).toLocaleString()}</p>
+                </div>
+                <div className="rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-[11px]">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Skipped rows</p>
+                  <p className="font-semibold tabular-nums">{Number(job.execution_stats?.skipped_rows ?? 0).toLocaleString()}</p>
+                </div>
+              </div>
               <details className="rounded-lg border border-foreground/10 bg-background px-3 py-2">
                 <summary className="cursor-pointer text-xs font-medium text-foreground">Execution stats</summary>
                 <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground">

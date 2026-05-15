@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Ban,
   CheckCircle2,
   Clock,
   FileText,
@@ -36,6 +37,13 @@ const STYLES: Record<PostStatus, StatusStyle> = {
     text:  'text-amber-700',
     ring:  'ring-amber-300/60',
   },
+  queued: {
+    label: 'Queued',
+    icon:  Clock,
+    bg:    'bg-violet-50',
+    text:  'text-violet-700',
+    ring:  'ring-violet-300/60',
+  },
   publishing: {
     label: 'Publishing',
     icon:  Loader2,
@@ -65,6 +73,13 @@ const STYLES: Record<PostStatus, StatusStyle> = {
     text:  'text-orange-800',
     ring:  'ring-orange-300/60',
     spin:  true,
+  },
+  cancelled: {
+    label: 'Cancelled',
+    icon:  Ban,
+    bg:    'bg-zinc-100',
+    text:  'text-zinc-600',
+    ring:  'ring-zinc-300/60',
   },
 };
 

@@ -107,6 +107,12 @@ export async function executeOneImportChunk(params: ExecuteOneChunkParams): Prom
       processedThisChunk: 0,
       importedThisChunk: 0,
       failedThisChunk: 0,
+      skippedThisChunk: 0,
+      postsCreatedThisChunk: 0,
+      scheduledPostsThisChunk: 0,
+      publishingReadyThisChunk: 0,
+      mediaAttachedThisChunk: 0,
+      platformLinksThisChunk: 0,
       chunkDurationMs: 0,
     });
     if (done.finished) {
@@ -136,6 +142,11 @@ export async function executeOneImportChunk(params: ExecuteOneChunkParams): Prom
   let importedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  let postsCreated = 0;
+  let scheduledCreated = 0;
+  let publishingReadyCreated = 0;
+  let mediaAttachedCount = 0;
+  let linkedPlatformsCount = 0;
 
   for (const row of rows) {
     const outcome = await processClaimedRow(supabase, {
@@ -149,6 +160,12 @@ export async function executeOneImportChunk(params: ExecuteOneChunkParams): Prom
     if (outcome.state === 'imported') importedCount += 1;
     else if (outcome.state === 'failed') failedCount += 1;
     else skippedCount += 1;
+
+    if (outcome.postId) postsCreated += 1;
+    if (outcome.scheduled) scheduledCreated += 1;
+    if (outcome.publishingReady) publishingReadyCreated += 1;
+    mediaAttachedCount += outcome.mediaAttached ?? 0;
+    linkedPlatformsCount += outcome.platformsLinked ?? 0;
   }
 
   const chunkDurationMs = Math.max(1, nowMs() - chunkStart);
@@ -170,6 +187,12 @@ export async function executeOneImportChunk(params: ExecuteOneChunkParams): Prom
     processedThisChunk: rows.length,
     importedThisChunk: importedCount,
     failedThisChunk: failedCount,
+    skippedThisChunk: skippedCount,
+    postsCreatedThisChunk: postsCreated,
+    scheduledPostsThisChunk: scheduledCreated,
+    publishingReadyThisChunk: publishingReadyCreated,
+    mediaAttachedThisChunk: mediaAttachedCount,
+    platformLinksThisChunk: linkedPlatformsCount,
     chunkDurationMs,
   });
 
@@ -194,6 +217,11 @@ export async function executeOneImportChunk(params: ExecuteOneChunkParams): Prom
     rows_imported: importedCount,
     rows_failed: failedCount,
     rows_skipped: skippedCount,
+    posts_created: postsCreated,
+    scheduled_posts: scheduledCreated,
+    publishing_ready_jobs: publishingReadyCreated,
+    media_attached: mediaAttachedCount,
+    platform_links: linkedPlatformsCount,
     duration_ms: chunkDurationMs,
     finished: result.finished,
     terminal_status: result.terminalStatus ?? null,

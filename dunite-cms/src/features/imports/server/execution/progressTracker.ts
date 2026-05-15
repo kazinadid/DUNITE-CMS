@@ -68,10 +68,29 @@ export async function updateExecutionProgress(
     processedThisChunk: number;
     importedThisChunk: number;
     failedThisChunk: number;
+    skippedThisChunk: number;
+    postsCreatedThisChunk: number;
+    scheduledPostsThisChunk: number;
+    publishingReadyThisChunk: number;
+    mediaAttachedThisChunk: number;
+    platformLinksThisChunk: number;
     chunkDurationMs: number;
   },
 ): Promise<{ finished: boolean; terminalStatus?: 'completed' | 'partial_success' | 'failed' }> {
-  const { jobId, workerId, processedThisChunk, importedThisChunk, failedThisChunk, chunkDurationMs } = params;
+  const {
+    jobId,
+    workerId,
+    processedThisChunk,
+    importedThisChunk,
+    failedThisChunk,
+    skippedThisChunk,
+    postsCreatedThisChunk,
+    scheduledPostsThisChunk,
+    publishingReadyThisChunk,
+    mediaAttachedThisChunk,
+    platformLinksThisChunk,
+    chunkDurationMs,
+  } = params;
   await supabase.rpc('import_jobs_recompute_row_statistics', { p_job_id: jobId });
 
   const { data: job } = await supabase
@@ -85,6 +104,12 @@ export async function updateExecutionProgress(
   const totalProcessed = (stats.processed ?? 0) + processedThisChunk;
   const totalSucceeded = (stats.succeeded ?? 0) + importedThisChunk;
   const totalFailed = (stats.failed ?? 0) + failedThisChunk;
+  const totalSkipped = (stats.skipped_rows ?? 0) + skippedThisChunk;
+  const totalPostsCreated = (stats.posts_created ?? 0) + postsCreatedThisChunk;
+  const totalScheduledPosts = (stats.scheduled_posts ?? 0) + scheduledPostsThisChunk;
+  const totalPublishingReady = (stats.publishing_ready_posts ?? 0) + publishingReadyThisChunk;
+  const totalMediaAttached = (stats.media_assets_attached ?? 0) + mediaAttachedThisChunk;
+  const totalPlatformLinks = (stats.platform_links_created ?? 0) + platformLinksThisChunk;
   const durationMs = (() => {
     const start = job?.started_at ?? job?.created_at;
     if (!start) return undefined;
@@ -102,6 +127,12 @@ export async function updateExecutionProgress(
     processed: totalProcessed,
     succeeded: totalSucceeded,
     failed: totalFailed,
+    skipped_rows: totalSkipped,
+    posts_created: totalPostsCreated,
+    scheduled_posts: totalScheduledPosts,
+    publishing_ready_posts: totalPublishingReady,
+    media_assets_attached: totalMediaAttached,
+    platform_links_created: totalPlatformLinks,
     last_chunk_at: nowIso,
     last_chunk_rows: processedThisChunk,
     last_chunk_duration_ms: chunkDurationMs,

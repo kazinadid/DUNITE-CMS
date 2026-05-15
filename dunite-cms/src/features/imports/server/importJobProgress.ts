@@ -71,6 +71,30 @@ export async function getImportJobProgressAction(
     typeof stats.last_chunk_rows === 'number' && Number.isFinite(stats.last_chunk_rows) ? stats.last_chunk_rows : null;
   const chunkFailures =
     typeof stats.failed === 'number' && Number.isFinite(stats.failed) ? Math.max(0, Math.floor(stats.failed)) : 0;
+  const postsCreated =
+    typeof stats.posts_created === 'number' && Number.isFinite(stats.posts_created)
+      ? Math.max(0, Math.floor(stats.posts_created))
+      : 0;
+  const scheduledPosts =
+    typeof stats.scheduled_posts === 'number' && Number.isFinite(stats.scheduled_posts)
+      ? Math.max(0, Math.floor(stats.scheduled_posts))
+      : 0;
+  const publishingReadyPosts =
+    typeof stats.publishing_ready_posts === 'number' && Number.isFinite(stats.publishing_ready_posts)
+      ? Math.max(0, Math.floor(stats.publishing_ready_posts))
+      : 0;
+  const mediaAssetsAttached =
+    typeof stats.media_assets_attached === 'number' && Number.isFinite(stats.media_assets_attached)
+      ? Math.max(0, Math.floor(stats.media_assets_attached))
+      : 0;
+  const platformLinksCreated =
+    typeof stats.platform_links_created === 'number' && Number.isFinite(stats.platform_links_created)
+      ? Math.max(0, Math.floor(stats.platform_links_created))
+      : 0;
+  const skippedRows =
+    typeof stats.skipped_rows === 'number' && Number.isFinite(stats.skipped_rows)
+      ? Math.max(0, Math.floor(stats.skipped_rows))
+      : 0;
 
   const progress: ImportJobProgressPayload = {
     id: job.id as string,
@@ -100,6 +124,12 @@ export async function getImportJobProgressAction(
     last_chunk_duration_ms: lastChunkDurationMs,
     last_chunk_rows: lastChunkRows,
     chunk_failures: chunkFailures,
+    posts_created: postsCreated,
+    scheduled_posts: scheduledPosts,
+    publishing_ready_posts: publishingReadyPosts,
+    media_assets_attached: mediaAssetsAttached,
+    platform_links_created: platformLinksCreated,
+    skipped_rows: skippedRows,
   };
 
   return { ok: true, progress };

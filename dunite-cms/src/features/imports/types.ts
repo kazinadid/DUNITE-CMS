@@ -130,6 +130,12 @@ export interface ImportExecutionStats {
   last_chunk_duration_ms?: number;
   rows_per_second?: number;
   queue_latency_ms?: number;
+  posts_created?: number;
+  scheduled_posts?: number;
+  publishing_ready_posts?: number;
+  media_assets_attached?: number;
+  platform_links_created?: number;
+  skipped_rows?: number;
   [key: string]: unknown;
 }
 
@@ -197,6 +203,12 @@ export interface ImportJobProgressPayload {
   last_chunk_duration_ms: number | null;
   last_chunk_rows: number | null;
   chunk_failures: number;
+  posts_created: number;
+  scheduled_posts: number;
+  publishing_ready_posts: number;
+  media_assets_attached: number;
+  platform_links_created: number;
+  skipped_rows: number;
 }
 
 export interface ImportFailureGroup {

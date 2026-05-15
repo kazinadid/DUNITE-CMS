@@ -1,16 +1,18 @@
 export type PostStatus =
   | 'draft'
   | 'scheduled'
+  | 'queued'
   | 'publishing'
   | 'published'
   | 'failed'
-  | 'retrying';
+  | 'retrying'
+  | 'cancelled';
 
 /**
  * Statuses the composer can deliberately write. Transient/system-driven states
  * (`publishing`, `failed`) live only in the database / publish-worker.
  */
-export type WritablePostStatus = 'draft' | 'scheduled' | 'published';
+export type WritablePostStatus = 'draft' | 'scheduled' | 'queued' | 'published';
 
 export interface PostAuthor {
   id: string;

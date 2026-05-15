@@ -223,6 +223,18 @@ export function ImportLiveQueuePanel({
                     {progress != null ? `${progress.job_retry_count}/${progress.max_job_retries}` : '—'}
                   </dd>
                 </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">Posts created</dt>
+                  <dd className="font-medium tabular-nums">
+                    {progress?.posts_created != null ? progress.posts_created.toLocaleString() : '—'}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">Scheduled</dt>
+                  <dd className="font-medium tabular-nums">
+                    {progress?.scheduled_posts != null ? progress.scheduled_posts.toLocaleString() : '—'}
+                  </dd>
+                </div>
               </dl>
             </div>
 
@@ -255,6 +267,18 @@ export function ImportLiveQueuePanel({
                 <div className="flex justify-between gap-2">
                   <dt className="text-muted-foreground">Worker</dt>
                   <dd className="font-medium tabular-nums">{progress?.worker_id ?? '—'}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">Publishing-ready</dt>
+                  <dd className="font-medium tabular-nums">
+                    {progress?.publishing_ready_posts != null ? progress.publishing_ready_posts.toLocaleString() : '—'}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">Media attached</dt>
+                  <dd className="font-medium tabular-nums">
+                    {progress?.media_assets_attached != null ? progress.media_assets_attached.toLocaleString() : '—'}
+                  </dd>
                 </div>
               </dl>
             </div>

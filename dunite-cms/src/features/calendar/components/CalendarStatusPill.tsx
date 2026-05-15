@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  Ban,
   CheckCircle2,
   Clock,
   FileText,
@@ -40,6 +41,13 @@ const STATUS_STYLES: Record<
     Icon:      Clock,
     iconClass: 'text-sky-600',
   },
+  queued: {
+    label:     'Queued',
+    pill:
+      'border border-violet-200 bg-violet-50 text-violet-900 ring-1 ring-inset ring-violet-200/65',
+    Icon:      Clock,
+    iconClass: 'text-violet-600',
+  },
   publishing: {
     label:     'Publishing',
     pill:
@@ -69,6 +77,13 @@ const STATUS_STYLES: Record<
     Icon:      RefreshCw,
     iconClass: 'text-orange-700',
     spin:      true,
+  },
+  cancelled: {
+    label:     'Cancelled',
+    pill:
+      'border border-zinc-200 bg-zinc-100 text-zinc-800 ring-1 ring-inset ring-zinc-200/70',
+    Icon:      Ban,
+    iconClass: 'text-zinc-600',
   },
 };
 

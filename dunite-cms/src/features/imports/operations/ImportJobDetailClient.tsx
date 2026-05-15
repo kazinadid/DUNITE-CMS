@@ -106,6 +106,30 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
         typeof (job.execution_stats as Record<string, unknown> | undefined)?.failed === 'number'
           ? ((job.execution_stats as Record<string, unknown>).failed as number)
           : 0,
+      posts_created:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.posts_created === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).posts_created as number)
+          : 0,
+      scheduled_posts:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.scheduled_posts === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).scheduled_posts as number)
+          : 0,
+      publishing_ready_posts:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.publishing_ready_posts === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).publishing_ready_posts as number)
+          : 0,
+      media_assets_attached:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.media_assets_attached === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).media_assets_attached as number)
+          : 0,
+      platform_links_created:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.platform_links_created === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).platform_links_created as number)
+          : 0,
+      skipped_rows:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.skipped_rows === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).skipped_rows as number)
+          : 0,
     };
   }, [progress, job]);
 
@@ -219,6 +243,22 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
             <p className="flex items-center gap-2">
               <span className="text-muted-foreground">Heartbeat</span>
               <QueueHealthIndicator status={display.status} heartbeatIso={display.processing_heartbeat_at} />
+            </p>
+            <p>
+              <span className="text-muted-foreground">Posts created</span>{' '}
+              <span className="font-medium tabular-nums">{display.posts_created}</span>
+            </p>
+            <p>
+              <span className="text-muted-foreground">Publishing-ready</span>{' '}
+              <span className="font-medium tabular-nums">{display.publishing_ready_posts}</span>
+            </p>
+            <p>
+              <span className="text-muted-foreground">Media attached</span>{' '}
+              <span className="font-medium tabular-nums">{display.media_assets_attached}</span>
+            </p>
+            <p>
+              <span className="text-muted-foreground">Platform links</span>{' '}
+              <span className="font-medium tabular-nums">{display.platform_links_created}</span>
             </p>
           </div>
           {canMutate && (

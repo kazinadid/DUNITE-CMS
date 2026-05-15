@@ -60,6 +60,11 @@ export interface RowExecutionOutcome {
   rowId: string;
   state: 'imported' | 'failed' | 'skipped';
   reason: string | null;
+  postId?: string | null;
+  scheduled?: boolean;
+  publishingReady?: boolean;
+  platformsLinked?: number;
+  mediaAttached?: number;
 }
 
 export interface ChunkExecutionOutcome {
