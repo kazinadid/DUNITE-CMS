@@ -199,7 +199,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
           <div className="ml-auto flex items-center gap-3">
             <DashboardNotificationHost userId={user.id} />
-            <AppToast />
             <span className="hidden sm:block text-sm font-medium text-gray-800">
               {displayName}
             </span>
@@ -250,6 +249,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+      <AppToast />
     </div>
   );
 }

@@ -34,18 +34,18 @@ export interface ImportCampaignColumnGuideProps {
  */
 export function ImportCampaignColumnGuide({ className }: ImportCampaignColumnGuideProps) {
   return (
-    <div className={cn('rounded-xl border border-foreground/10 bg-muted/20 p-4 text-sm', className)}>
+    <div className={cn('rounded-xl border border-foreground/10 bg-muted/15 p-3 text-sm shadow-sm', className)}>
       <p className="font-medium text-foreground">Expected columns</p>
-      <ul className="mt-2 list-inside list-disc space-y-0.5 text-muted-foreground">
+      <ul className="mt-2 grid gap-1 text-muted-foreground">
         {IMPORT_EXPECTED_FIELDS_ORDERED.map((col) => (
-          <li key={col}>
+          <li key={col} className="flex items-center justify-between gap-2 rounded-md bg-background/55 px-2 py-1">
             <span className="font-mono text-xs text-foreground">{col}</span>
             {IMPORT_REQUIRED_FIELDS.includes(col as (typeof IMPORT_REQUIRED_FIELDS)[number]) ? (
-              <span className="ml-2 text-[10px] font-semibold tracking-wide text-destructive uppercase">
+              <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-destructive uppercase">
                 Required
               </span>
             ) : (
-              <span className="ml-2 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                 Optional
               </span>
             )}
@@ -53,12 +53,12 @@ export function ImportCampaignColumnGuide({ className }: ImportCampaignColumnGui
         ))}
       </ul>
 
-      <p className="mt-4 text-xs text-muted-foreground">
+      <p className="mt-3 text-xs text-muted-foreground">
         Columns may use common synonyms once normalized (matching case, spaces, underscores, or dashes to the names
         above).
       </p>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -91,11 +91,6 @@ export function ImportCampaignColumnGuide({ className }: ImportCampaignColumnGui
           XLSX template
         </Button>
       </div>
-      <p className="mt-3 text-[10px] text-muted-foreground">
-        Direct links (same files as the buttons):{' '}
-        <code className="rounded bg-muted px-1">/api/imports/template/csv</code> ·{' '}
-        <code className="rounded bg-muted px-1">/api/imports/template/xlsx</code>
-      </p>
     </div>
   );
 }

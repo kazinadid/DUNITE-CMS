@@ -4,6 +4,7 @@
  */
 
 import { IMPORT_FIELD_ALIASES, normalizeSpreadsheetHeaderKey } from './importFieldSchema';
+import { stringifySpreadsheetCell } from './spreadsheetCell';
 
 const POST_TEXT_ALIASES = IMPORT_FIELD_ALIASES.post_text;
 const PLATFORM_ALIASES = IMPORT_FIELD_ALIASES.platform;
@@ -51,7 +52,7 @@ export function extractMappedFields(raw: Record<string, unknown>): {
   return {
     postText: asStr(pt.value),
     platformRaw: asStr(pl.value),
-    dateRaw: asStr(dt.value),
+    dateRaw: stringifySpreadsheetCell(dt.value),
     mediaRaw: asStr(md.value),
     tagsRaw: asStr(tg.value),
   };

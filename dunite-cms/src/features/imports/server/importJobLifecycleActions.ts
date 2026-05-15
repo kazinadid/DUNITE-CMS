@@ -23,6 +23,7 @@ export async function cancelImportJobAction(jobId: string): Promise<{ ok: boolea
 
 export async function listRecentImportJobsAction(
   limit = 15,
+  offset = 0,
 ): Promise<{ ok: boolean; jobs?: ImportJobListItem[]; message?: string }> {
   const supabase = await createSupabaseServerClient();
   try {
@@ -30,13 +31,15 @@ export async function listRecentImportJobsAction(
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : 'Unauthorized.' };
   }
+  const safeLimit = Math.min(100, Math.max(1, limit));
+  const safeOffset = Math.max(0, Math.min(500, offset));
   const { data, error } = await supabase
     .from('import_jobs')
     .select(
       'id, file_name, status, total_rows, imported_rows, valid_rows, invalid_rows, duplicate_rows, warning_rows, created_at, updated_at, execution_stats, queued_at, processing_heartbeat_at, job_retry_count, max_job_retries, started_at, completed_at',
     )
     .order('created_at', { ascending: false })
-    .limit(Math.min(100, Math.max(1, limit)));
+    .range(safeOffset, safeOffset + safeLimit - 1);
 
   if (error) return { ok: false, message: error.message };
   return { ok: true, jobs: (data ?? []) as ImportJobListItem[] };

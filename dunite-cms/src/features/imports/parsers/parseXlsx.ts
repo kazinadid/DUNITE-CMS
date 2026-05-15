@@ -1,3 +1,4 @@
+import { stringifySpreadsheetCell } from '../lib/spreadsheetCell';
 import type { ParsedSheetRecords } from './parsedSheetRecords';
 
 export type { ParsedSheetRecords };
@@ -65,7 +66,7 @@ export async function parseXlsxToRecords(
     const row = json[i];
     const rec: Record<string, string> = {};
     for (const [k, v] of Object.entries(row)) {
-      rec[String(k).trim()] = v === null || v === undefined ? '' : String(v);
+      rec[String(k).trim()] = stringifySpreadsheetCell(v);
     }
     const hasCell = Object.values(rec).some((v) => v.trim() !== '');
     if (hasCell) rows.push(rec);

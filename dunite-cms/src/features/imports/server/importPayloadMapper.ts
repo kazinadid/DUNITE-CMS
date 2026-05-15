@@ -1,5 +1,6 @@
 import type { NormalizedImportRow } from '../types';
 import type { ValidationIssue } from '../validation/validationTypes';
+import { publishAtToIsoOrNull } from '../lib/dates';
 import { ImportIssueCode } from '../validation/issueCodes';
 
 const DUPLICATE_ISSUE_CODES = new Set<string>([
@@ -31,7 +32,7 @@ export function normalizedRowToImportRowPayload(row: NormalizedImportRow): {
     content: row.postText,
     body: row.postText,
     platforms: row.platforms,
-    publish_at: row.publishAt ? row.publishAt.toISOString() : null,
+    publish_at: publishAtToIsoOrNull(row.publishAt),
     publish_at_raw: row.publishAtRaw ?? null,
     media_urls: row.mediaUrls,
     hashtags: row.hashtags,

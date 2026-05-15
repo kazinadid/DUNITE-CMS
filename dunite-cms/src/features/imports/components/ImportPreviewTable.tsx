@@ -14,6 +14,7 @@ import { Link2, Table2 } from 'lucide-react';
 import { PLATFORMS } from '@/features/composer/lib/platforms';
 import { cn } from '@/lib/utils';
 
+import { formatPublishAtForDisplay } from '../lib/dates';
 import { ImportIssueCode } from '../validation/issueCodes';
 
 import { ValidationStateBadge } from './ValidationStateBadge';
@@ -55,7 +56,7 @@ function ImportPreviewTableEmpty({ className }: { className?: string }) {
   return (
     <section
       className={cn(
-        'flex w-full flex-none shrink-0 flex-col items-center justify-center rounded-xl border border-dashed border-foreground/15 bg-muted/10 px-6 py-10 text-center sm:px-8',
+        'flex min-h-[320px] w-full flex-none shrink-0 flex-col items-center justify-center rounded-xl border border-dashed border-foreground/15 bg-muted/10 px-6 py-10 text-center sm:px-8',
         className,
       )}
       role="region"
@@ -132,22 +133,22 @@ function ImportPreviewTableVirtualized({
   const bottomPad = Math.max(0, totalHeight - end * ROW_HEIGHT);
 
   return (
-    <div className={cn('flex min-h-0 flex-1 flex-col gap-2', className)}>
-      <p className="text-xs text-muted-foreground">
+    <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden', className)}>
+      <p className="min-w-0 text-xs text-muted-foreground">
         Virtualized: rows {start + 1}–{Math.min(end, rows.length)} of {rows.length}. Click a row to inspect; use
         checkboxes for bulk preparation.
       </p>
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="max-h-[min(420px,50vh)] min-h-0 flex-1 overflow-auto rounded-lg border ring-1 ring-foreground/10"
+        className="max-h-[min(620px,62vh)] min-h-[360px] min-w-0 flex-1 overscroll-contain overflow-auto rounded-lg border bg-background ring-1 ring-foreground/10"
       >
-        <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-x-auto">
           <table
             role="grid"
             aria-rowcount={rows.length}
             aria-colcount={COL_COUNT}
-            className="w-full min-w-[1240px] border-collapse text-left text-xs"
+            className="w-full min-w-[1080px] border-collapse text-left text-xs xl:min-w-[1240px]"
           >
             <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
               <tr className="border-b">
@@ -192,14 +193,7 @@ function ImportPreviewTableVirtualized({
               {slice.map((r) => {
                 const plat = r.platforms.map((p) => PLATFORMS[p]?.shortLabel ?? p).join(', ');
                 const postPreview = r.postText.slice(0, 80) + (r.postText.length > 80 ? '…' : '');
-                const when = r.publishAt
-                  ? new Intl.DateTimeFormat(undefined, {
-                      dateStyle: 'short',
-                      timeStyle: 'short',
-                    }).format(r.publishAt)
-                  : r.publishAtRaw
-                    ? String(r.publishAtRaw).slice(0, 24)
-                    : '—';
+                const when = formatPublishAtForDisplay(r.publishAt, r.publishAtRaw);
                 const tags = r.hashtags.slice(0, 4).join(', ') + (r.hashtags.length > 4 ? '…' : '');
                 const mediaLabel =
                   r.mediaUrls.length === 0 ? '—' : r.mediaUrls.length === 1 ? '1 link' : `${r.mediaUrls.length} links`;

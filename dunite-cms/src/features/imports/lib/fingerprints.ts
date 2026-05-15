@@ -1,3 +1,5 @@
+import { coerceUnknownToUtcDate } from './dates';
+
 /**
  * Deterministic fingerprints for client-side duplicate detection.
  * Server-side import_job_mark_duplicates_* can extend with the same keys later.
@@ -25,7 +27,8 @@ export function fingerprintMediaUrls(urls: readonly string[]): string {
 }
 
 export function fingerprintScheduleAndContent(publishAt: Date | null, contentFp: string): string {
-  if (!publishAt) return `${contentFp}|noschedule`;
-  const minute = Math.floor(publishAt.getTime() / 60000);
+  const d = coerceUnknownToUtcDate(publishAt);
+  if (!d) return `${contentFp}|noschedule`;
+  const minute = Math.floor(d.getTime() / 60000);
   return djb2(`${contentFp}|${minute}`);
 }

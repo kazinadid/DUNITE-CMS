@@ -48,9 +48,15 @@ export function ImportHistoryDashboard({ role, className }: ImportHistoryDashboa
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const admin = isAdmin(role);
 
+  const selectedStatus = useMemo(
+    () => jobs.find((j) => j.id === selectedId)?.status,
+    [jobs, selectedId],
+  );
+
   const { progress, refresh } = useImportJobProgressPoll(
     selectedId,
     !!selectedId,
+    selectedStatus,
   );
 
   const load = useCallback(async () => {

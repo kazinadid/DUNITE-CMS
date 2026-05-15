@@ -29,8 +29,8 @@ export function BatchImportDialog({ open, onOpenChange, role }: BatchImportDialo
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        overlayClassName="z-[100] bg-black/40 backdrop-blur-sm"
-        className="z-[101] flex max-h-[min(92vh,900px)] w-full max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
+        overlayClassName="z-[100001] bg-black/40 backdrop-blur-sm"
+        className="z-[100002] flex max-h-[min(94dvh,900px)] w-full max-w-[min(96vw,80rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,80rem)]"
       >
         <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12">
           <DialogTitle>Campaign import</DialogTitle>
@@ -38,8 +38,8 @@ export function BatchImportDialog({ open, onOpenChange, role }: BatchImportDialo
             Parse a CSV or XLSX locally. Nothing is uploaded until you run a separate commit step.
           </DialogDescription>
         </DialogHeader>
-        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-          <ImportWorkflowBody className="p-4" role={role} />
+        <div className="min-h-0 min-w-0 flex-1 overscroll-contain overflow-x-hidden overflow-y-auto">
+          <ImportWorkflowBody className="p-3 sm:p-4" role={role} />
         </div>
       </DialogContent>
     </Dialog>

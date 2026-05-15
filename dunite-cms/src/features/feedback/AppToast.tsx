@@ -9,6 +9,8 @@ export function AppToast() {
       richColors={false}
       closeButton
       duration={3000}
+      style={{ zIndex: 100_000 }}
+      className="!z-[100000] max-sm:[--width:calc(100vw-2rem)] max-sm:!left-1/2 max-sm:!right-auto max-sm:!-translate-x-1/2"
       toastOptions={{
         classNames: {
           toast:
@@ -19,7 +21,6 @@ export function AppToast() {
           error: '!border-red-200',
         },
       }}
-      className="max-sm:[--width:calc(100vw-2rem)] max-sm:!left-1/2 max-sm:!right-auto max-sm:!-translate-x-1/2"
     />
   );
 }

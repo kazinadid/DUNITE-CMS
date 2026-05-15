@@ -21,6 +21,9 @@ export async function getImportListSession(supabase: SupabaseClient): Promise<{ 
   if (authErr || !user) {
     throw new Error('Not authenticated.');
   }
+  if (!user.id) {
+    throw new Error('Authenticated user is missing an id.');
+  }
   const { data: profile, error: pErr } = await supabase.from('users').select('role').eq('id', user.id).single();
   if (pErr || !profile?.role) {
     throw new Error('Unable to resolve user role.');

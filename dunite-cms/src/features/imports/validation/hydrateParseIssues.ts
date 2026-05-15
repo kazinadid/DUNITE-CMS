@@ -19,18 +19,30 @@ export function hydrateParseIssues(row: NormalizedImportRow): void {
   }
 
   if (parseHints.dateHeuristicKey) {
+    const diag = parseHints.dateParseDiagnostics;
     pushIssue(
       issues,
       ImportIssueCode.DATE_PARSE_HEURISTIC,
       'warning',
       `Date was interpreted using a fallback (${parseHints.dateHeuristicKey}).`,
-      { key: parseHints.dateHeuristicKey },
+      {
+        key: parseHints.dateHeuristicKey,
+        ...(diag?.original ? { original: diag.original } : {}),
+        ...(diag?.normalizedIso ? { normalized_iso: diag.normalizedIso } : {}),
+      },
     );
   }
 
   if (parseHints.dateParseFailed) {
-    pushIssue(issues, ImportIssueCode.INVALID_DATE, 'error', 'Could not parse the publish date from this row.', {
+    const diag = parseHints.dateParseDiagnostics;
+    pushIssue(issues, ImportIssueCode.INVALID_DATE, 'error', 'Unsupported publish date format.', {
       raw: row.publishAtRaw,
+      ...(diag?.original ? { original: diag.original } : {}),
+      ...(diag?.normalizedIso !== undefined && diag?.normalizedIso !== null
+        ? { normalized_iso: String(diag.normalizedIso) }
+        : {}),
+      ...(diag?.reasonCode ? { reason_code: diag.reasonCode } : {}),
+      ...(diag?.reason ? { reason: diag.reason } : {}),
     });
   }
 }

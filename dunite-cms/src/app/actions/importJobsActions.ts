@@ -70,8 +70,8 @@ export async function cancelImportJobServerAction(jobId: string) {
   return res;
 }
 
-export async function listRecentImportJobsServerAction(limit?: number) {
-  return listRecentImportJobsAction(limit);
+export async function listRecentImportJobsServerAction(limit?: number, offset?: number) {
+  return listRecentImportJobsAction(limit, offset);
 }
 
 export async function retryFailedImportRowsServerAction(jobId: string) {

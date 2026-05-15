@@ -1,3 +1,4 @@
+import { coerceUnknownToUtcDate } from '../../lib/dates';
 import { fingerprintContent, fingerprintMediaUrls, fingerprintScheduleAndContent } from '../../lib/fingerprints';
 import { ImportIssueCode } from '../issueCodes';
 import { pushIssue } from '../issueHelpers';
@@ -53,9 +54,10 @@ export function applyCrossRowDuplicateRules(
       }
     }
 
+    const scheduled = coerceUnknownToUtcDate(row.publishAt);
     const sfp = fingerprintScheduleAndContent(row.publishAt, cfp);
     const prevS = scheduleFirst.get(sfp);
-    if (prevS !== undefined && prevS !== row.sourceRowIndex && row.publishAt) {
+    if (prevS !== undefined && prevS !== row.sourceRowIndex && scheduled) {
       pushIssue(
         row.issues,
         ImportIssueCode.DUPLICATE_SCHEDULE,
@@ -63,7 +65,7 @@ export function applyCrossRowDuplicateRules(
         `Same schedule slot and caption fingerprint as row ${prevS}.`,
         { otherRow: prevS },
       );
-    } else if (row.publishAt) {
+    } else if (scheduled) {
       scheduleFirst.set(sfp, row.sourceRowIndex);
     }
 

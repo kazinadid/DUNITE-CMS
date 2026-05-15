@@ -44,7 +44,7 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
   const [diagGroups, setDiagGroups] = useState<ImportFailureGroup[]>([]);
   const [diagLoading, setDiagLoading] = useState(false);
 
-  const { progress, refresh } = useImportJobProgressPoll(jobId, true);
+  const { progress, refresh } = useImportJobProgressPoll(jobId, true, job.status);
 
   const display = useMemo((): ImportJobProgressPayload => {
     if (progress) return progress;

@@ -1,4 +1,5 @@
 import { fingerprintContent, fingerprintMediaUrls, fingerprintScheduleAndContent } from '../lib/fingerprints';
+import { sanitizeRowPublishAtField } from '../lib/dates';
 
 import { deriveRowValidationState } from './deriveRowState';
 import { hydrateParseIssues } from './hydrateParseIssues';
@@ -38,6 +39,7 @@ export function runImportValidationPipeline(
 
   for (const row of rows) {
     row.issues = [];
+    sanitizeRowPublishAtField(row, opts.timezone);
     hydrateParseIssues(row);
   }
 

@@ -3,6 +3,7 @@ import 'server-only';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 import type { ImportExecutionStats } from '../types';
+import { coerceUnknownToUtcDate } from '../lib/dates';
 import { getImportActor } from './importAuth';
 import { resolveImportChunkSize } from './importQueueConstants';
 
@@ -151,8 +152,8 @@ export async function executeImportJobChunkAction(jobId: string): Promise<Execut
 
     let scheduledAt: Date | null = null;
     if (pd.publish_at) {
-      const d = new Date(String(pd.publish_at));
-      if (!Number.isNaN(d.getTime())) scheduledAt = d;
+      const d = coerceUnknownToUtcDate(pd.publish_at);
+      if (d) scheduledAt = d;
     }
 
     const postStatus = pickPostStatus(scheduledAt);

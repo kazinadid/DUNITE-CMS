@@ -126,7 +126,7 @@ export function ImportDropzone({
         onDragOver={onDragOver}
         onDrop={onDrop}
         className={cn(
-          'group/dz relative flex min-h-[200px] cursor-pointer flex-col items-center justify-center gap-5 rounded-2xl border border-dashed border-foreground/20 bg-muted/15 px-6 py-8 text-center outline-none transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out',
+          'group/dz relative flex min-h-[150px] cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-primary/25 bg-gradient-to-br from-primary/[0.06] via-muted/15 to-background px-5 py-5 text-center outline-none transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out',
           'hover:border-primary/45 hover:bg-muted/35 hover:shadow-sm',
           'focus-visible:border-primary focus-visible:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           dragActive && 'scale-[1.01] border-primary border-solid bg-primary/[0.07] shadow-md ring-1 ring-primary/25',
@@ -135,7 +135,7 @@ export function ImportDropzone({
       >
         <div
           className={cn(
-            'flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-background shadow-sm ring-1 ring-foreground/10 transition-[transform,box-shadow,color,background-color] duration-200',
+            'flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background shadow-sm ring-1 ring-foreground/10 transition-[transform,box-shadow,color,background-color] duration-200',
             'group-hover/dz:scale-105 group-hover/dz:bg-primary/[0.06] group-hover/dz:ring-primary/25',
             'group-focus-visible/dz:ring-2 group-focus-visible/dz:ring-ring/60',
             dragActive && 'scale-105 bg-primary/10 ring-primary/35',
@@ -144,7 +144,7 @@ export function ImportDropzone({
         >
           <FileUp
             className={cn(
-              'size-7 text-muted-foreground transition-colors duration-200',
+              'size-5 text-muted-foreground transition-colors duration-200',
               'group-hover/dz:text-primary',
               dragActive && 'text-primary',
             )}
@@ -152,11 +152,11 @@ export function ImportDropzone({
           />
         </div>
 
-        <div className="max-w-md space-y-2">
-          <p id={instructionsId} className="text-base font-semibold tracking-tight text-foreground">
+        <div className="max-w-md space-y-1.5">
+          <p id={instructionsId} className="text-sm font-semibold tracking-tight text-foreground">
             Drop your spreadsheet here
           </p>
-          <p id={hintId} className="text-sm leading-relaxed text-muted-foreground">
+          <p id={hintId} className="text-xs leading-relaxed text-muted-foreground">
             CSV or Excel · UTF-8 · headers in row 1 · or press{' '}
             <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-foreground">
               Enter
@@ -171,8 +171,8 @@ export function ImportDropzone({
 
         <span
           className={cn(
-            buttonVariants({ variant: 'default', size: 'lg' }),
-            'pointer-events-none min-w-[9.5rem] px-5 py-2.5 text-sm font-semibold shadow-sm',
+            buttonVariants({ variant: 'default', size: 'sm' }),
+            'pointer-events-none min-w-[8rem] text-sm font-semibold shadow-sm',
             'group-hover/dz:bg-primary/92',
             'group-active/dz:translate-y-px',
           )}

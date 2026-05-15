@@ -32,7 +32,7 @@ function MetricCard({
   return (
     <div
       className={cn(
-        'flex min-w-[7.5rem] flex-1 flex-col gap-1 rounded-lg border border-foreground/10 bg-card px-3 py-2.5',
+        'flex min-w-0 flex-1 flex-col gap-1 rounded-lg border border-foreground/10 bg-card px-3 py-2.5 sm:min-w-[7.5rem]',
         emphasize && 'ring-1',
         emphasize && toneRing,
       )}
@@ -74,10 +74,10 @@ export function ImportPreviewMetricsCards({ validation, subtitle, className }: I
   const v = validation;
 
   return (
-    <div className={cn('space-y-2', className)}>
+    <div className={cn('min-w-0 space-y-2', className)}>
       {subtitle ? <p className="text-[11px] text-muted-foreground">{subtitle}</p> : null}
       <div
-        className="flex flex-wrap gap-2 rounded-xl border border-foreground/10 bg-muted/10 p-3"
+        className="grid min-w-0 gap-2 rounded-xl border border-foreground/10 bg-muted/10 p-3 sm:grid-cols-2 lg:flex lg:flex-wrap"
         role="region"
         aria-label="Import metrics for visible rows"
       >
@@ -107,7 +107,7 @@ export function ImportPreviewMetricsCards({ validation, subtitle, className }: I
         />
         <MetricCard label="Skipped" value={v.skippedRows} icon={<SkipForward className="size-3 opacity-60" aria-hidden />} />
         <MetricCard label="Ready to stage" value={v.stagingReadyRows} emphasize />
-        <div className="flex min-w-[120px] flex-1 flex-col justify-center rounded-lg border border-foreground/10 bg-background/80 px-3 py-2">
+        <div className="flex min-w-0 flex-1 flex-col justify-center rounded-lg border border-foreground/10 bg-background/80 px-3 py-2 sm:min-w-[120px]">
           <p className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Readiness</p>
           <p className="text-lg font-semibold tabular-nums text-foreground">{v.readinessPct}%</p>
           <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">

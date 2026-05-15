@@ -1,3 +1,4 @@
+import { coerceUnknownToUtcDate } from '../../lib/dates';
 import { ImportIssueCode } from '../issueCodes';
 import { pushIssue } from '../issueHelpers';
 import type { NormalizedImportRow } from '../../types';
@@ -17,12 +18,15 @@ export function applyRequiredRules(row: NormalizedImportRow): void {
     row.publishAt === null &&
     !row.publishAtRaw;
 
+  const hasPublishSchedule =
+    coerceUnknownToUtcDate(row.publishAt) != null || Boolean(row.publishAtRaw?.trim());
+
   if (isEmptyLine) {
     pushIssue(issues, ImportIssueCode.EMPTY_IMPORT_ROW, 'error', 'This row is empty — nothing to import.');
     return;
   }
 
-  if (trimmed.length === 0 && (row.platforms.length > 0 || row.mediaUrls.length > 0 || row.publishAt)) {
+  if (trimmed.length === 0 && (row.platforms.length > 0 || row.mediaUrls.length > 0 || hasPublishSchedule)) {
     pushIssue(
       issues,
       ImportIssueCode.WHITESPACE_ONLY,

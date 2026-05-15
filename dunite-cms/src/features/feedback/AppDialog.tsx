@@ -35,9 +35,10 @@ export function AppDialog({ state, onOpenChange }: AppDialogProps) {
     <Dialog open={state.open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="max-w-[calc(100%-2rem)] gap-0 overflow-hidden rounded-2xl border border-gray-200 bg-white p-0 text-gray-900 shadow-2xl shadow-black/25 sm:max-w-md"
+        overlayClassName="z-[100001] bg-black/30 backdrop-blur-sm"
+        className="z-[100002] max-h-[min(92dvh,38rem)] max-w-[calc(100%-2rem)] gap-0 overflow-hidden rounded-2xl border border-gray-200 bg-white p-0 text-gray-900 shadow-2xl shadow-black/25 sm:max-w-md"
       >
-        <div className="p-6">
+        <div className="min-h-0 overflow-y-auto p-6">
           <DialogHeader className="items-center text-center">
             <span className={`mb-2 flex h-12 w-12 items-center justify-center rounded-full ring-1 ${iconClasses}`}>
               <Icon size={22} aria-hidden />
@@ -45,7 +46,7 @@ export function AppDialog({ state, onOpenChange }: AppDialogProps) {
             <DialogTitle className="text-lg font-semibold tracking-tight text-gray-950">
               {state.title}
             </DialogTitle>
-            <DialogDescription className="max-w-sm text-sm leading-6 text-gray-500">
+            <DialogDescription className="max-w-sm whitespace-pre-wrap break-words text-sm leading-6 text-gray-500">
               {state.description}
             </DialogDescription>
           </DialogHeader>

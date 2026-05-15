@@ -1,5 +1,5 @@
 import { extractMappedFields } from './columnMap';
-import { parsePublishDate, getDefaultTimeZone } from './dates';
+import { getDefaultTimeZone, lookupPublishDateReasonMessage, parsePublishDate } from './dates';
 import { parseHashtags, parseMediaUrls, parsePlatforms } from './splitFields';
 
 import type { NormalizedImportRow } from '../types';
@@ -17,21 +17,36 @@ export function normalizeRawRecord(
   const { platforms, unknown } = parsePlatforms(f.platformRaw);
   const mediaUrls = parseMediaUrls(f.mediaRaw);
   const hashtags = parseHashtags(f.tagsRaw);
-  const { date, warning } = parsePublishDate(f.dateRaw, tz);
+  const trimmedDate = f.dateRaw.trim();
+  const parsed = parsePublishDate(f.dateRaw, tz);
+  const { date, warning, reasonCode, normalizedIso } = parsed;
+
+  const diagnostics =
+    trimmedDate && (!date || warning)
+      ? {
+          dateParseDiagnostics: {
+            original: trimmedDate,
+            normalizedIso: date ? (normalizedIso ?? date.toISOString()) : null,
+            reasonCode: date ? undefined : (reasonCode ?? 'unsupported_publish_date_format'),
+            reason: date ? undefined : lookupPublishDateReasonMessage(reasonCode),
+          },
+        }
+      : {};
 
   return {
     sourceRowIndex,
     postText: f.postText,
     platforms,
     publishAt: date,
-    ...(f.dateRaw.trim() ? { publishAtRaw: f.dateRaw.trim() } : {}),
+    ...(trimmedDate ? { publishAtRaw: trimmedDate } : {}),
     mediaUrls,
     hashtags,
     raw,
     parseHints: {
       unknownPlatformTokens: unknown,
       ...(warning ? { dateHeuristicKey: warning } : {}),
-      ...(f.dateRaw.trim() && date === null ? { dateParseFailed: true } : {}),
+      ...(trimmedDate && date === null ? { dateParseFailed: true } : {}),
+      ...diagnostics,
     },
     issues: [],
     validationState: 'valid',

@@ -74,13 +74,13 @@ export function ImportPreviewToolbar({
   return (
     <div
       className={cn(
-        'flex flex-col gap-3 rounded-xl border border-foreground/10 bg-muted/15 p-3 sm:p-4',
+        'flex min-w-0 flex-col gap-3 rounded-xl border border-foreground/10 bg-muted/15 p-3 sm:p-4',
         className,
       )}
       role="region"
       aria-label="Preview filters and preparation actions"
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
           <div className="min-w-0 space-y-1.5">
             <label htmlFor={searchId} className="text-xs font-medium text-muted-foreground">
@@ -138,12 +138,12 @@ export function ImportPreviewToolbar({
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
+      <div className="grid min-w-0 gap-2 border-t border-border/60 pt-3 sm:grid-cols-2 lg:flex lg:flex-wrap">
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="gap-1.5"
+          className="gap-1.5 max-sm:w-full"
           disabled={!canMutate || displayedCount === 0}
           onClick={onSelectAllVisible}
         >
@@ -154,6 +154,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="outline"
           size="sm"
+          className="max-sm:w-full"
           disabled={!canMutate || bulkSelectedCount === 0}
           onClick={onClearBulkSelection}
         >
@@ -163,7 +164,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="outline"
           size="sm"
-          className="gap-1.5 text-destructive hover:text-destructive"
+          className="gap-1.5 text-destructive hover:text-destructive max-sm:w-full"
           disabled={!canMutate || bulkSelectedCount === 0}
           onClick={onRemoveSelected}
         >
@@ -174,6 +175,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="outline"
           size="sm"
+          className="max-sm:w-full"
           disabled={!canMutate || totalParsedCount === 0}
           onClick={onRemoveInvalid}
         >
@@ -183,6 +185,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="outline"
           size="sm"
+          className="max-sm:w-full"
           disabled={!canMutate || totalParsedCount === 0}
           onClick={onRemoveSkipped}
         >
@@ -192,7 +195,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="outline"
           size="sm"
-          className="gap-1.5"
+          className="gap-1.5 max-sm:w-full"
           disabled={!canMutate || excludedCount === 0}
           onClick={onClearExclusions}
         >
@@ -203,7 +206,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="outline"
           size="sm"
-          className="gap-1.5"
+          className="gap-1.5 max-sm:w-full"
           disabled={!canMutate || revalidateDisabled}
           onClick={onRevalidate}
         >
@@ -214,7 +217,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="outline"
           size="sm"
-          className="gap-1.5"
+          className="gap-1.5 max-sm:w-full"
           disabled={!canMutate || retryDisabled}
           onClick={onRetryParse}
         >
@@ -225,7 +228,7 @@ export function ImportPreviewToolbar({
           type="button"
           variant="destructive"
           size="sm"
-          className="ml-auto"
+          className="lg:ml-auto max-sm:w-full"
           disabled={!canMutate}
           onClick={onClearImport}
         >

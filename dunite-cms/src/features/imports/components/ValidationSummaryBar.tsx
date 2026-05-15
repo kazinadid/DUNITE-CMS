@@ -22,19 +22,19 @@ export function ValidationSummaryBar({ validation, pending, className }: Validat
   return (
     <div
       className={cn(
-        'sticky top-0 z-20 flex flex-col gap-3 rounded-xl border border-foreground/10 bg-background/95 p-4 shadow-sm backdrop-blur-md supports-backdrop-filter:bg-background/85',
+        'flex min-w-0 flex-col gap-2 rounded-xl border border-foreground/10 bg-background/95 p-3 shadow-sm backdrop-blur-md supports-backdrop-filter:bg-background/85',
         className,
       )}
       role="region"
       aria-label="Import validation summary"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-foreground">Validation</span>
           {pending && <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Validating" />}
           <ReadinessMeter pct={validation.readinessPct} />
         </div>
-        <p className="text-xs text-muted-foreground">
+        <p className="min-w-0 text-xs text-muted-foreground">
           Staging only — nothing is written to posts until you run a server commit step.
         </p>
       </div>
@@ -70,14 +70,14 @@ export function ValidationSummaryBar({ validation, pending, className }: Validat
       </div>
 
       {(topErr.length > 0 || topWarn.length > 0) && (
-        <div className="grid gap-3 text-xs md:grid-cols-2">
+        <div className="grid gap-2 text-xs md:grid-cols-2">
           {topErr.length > 0 && (
-            <div className="rounded-lg bg-destructive/5 p-3 ring-1 ring-destructive/15">
-              <p className="mb-1.5 font-medium text-destructive">Top errors</p>
-              <ul className="space-y-1 text-muted-foreground">
+            <div className="rounded-lg bg-destructive/5 px-3 py-2 ring-1 ring-destructive/15">
+              <p className="mb-1 font-medium text-destructive">Top errors</p>
+              <ul className="flex flex-wrap gap-1.5 text-muted-foreground">
                 {topErr.map(({ code, count }) => (
                   <li key={code}>
-                    <code className="rounded bg-muted px-1 py-0.5 text-[10px] text-foreground">{code}</code>{' '}
+                    <code className="break-all rounded bg-muted px-1 py-0.5 text-[10px] text-foreground">{code}</code>{' '}
                     <span className="text-foreground">×{count}</span>
                   </li>
                 ))}
@@ -85,12 +85,12 @@ export function ValidationSummaryBar({ validation, pending, className }: Validat
             </div>
           )}
           {topWarn.length > 0 && (
-            <div className="rounded-lg bg-amber-500/5 p-3 ring-1 ring-amber-500/20">
-              <p className="mb-1.5 font-medium text-amber-800">Top warnings</p>
-              <ul className="space-y-1 text-muted-foreground">
+            <div className="rounded-lg bg-amber-500/5 px-3 py-2 ring-1 ring-amber-500/20">
+              <p className="mb-1 font-medium text-amber-800">Top warnings</p>
+              <ul className="flex flex-wrap gap-1.5 text-muted-foreground">
                 {topWarn.map(({ code, count }) => (
                   <li key={code}>
-                    <code className="rounded bg-muted px-1 py-0.5 text-[10px] text-foreground">{code}</code>{' '}
+                    <code className="break-all rounded bg-muted px-1 py-0.5 text-[10px] text-foreground">{code}</code>{' '}
                     <span className="text-foreground">×{count}</span>
                   </li>
                 ))}
@@ -106,7 +106,7 @@ export function ValidationSummaryBar({ validation, pending, className }: Validat
 function ReadinessMeter({ pct }: { pct: number }) {
   return (
     <div
-      className="flex items-center gap-2 rounded-full border border-foreground/10 bg-muted/40 px-3 py-1 text-xs font-medium"
+      className="flex min-w-0 flex-wrap items-center gap-2 rounded-full border border-foreground/10 bg-muted/40 px-3 py-1 text-xs font-medium"
       title="Share of non-skipped rows that are valid, warning, or duplicate-tier (no blocking errors)."
     >
       <span className="text-muted-foreground">Readiness</span>
@@ -135,14 +135,14 @@ function StatChip({
   return (
     <div
       className={cn(
-        'flex min-w-[100px] items-center gap-2 rounded-lg border border-foreground/10 bg-card px-3 py-2',
+        'flex min-w-0 items-center gap-2 rounded-lg border border-foreground/10 bg-card px-2.5 py-1.5',
         emphasize && 'ring-1 ring-foreground/15',
       )}
     >
       {icon}
-      <div className="min-w-0">
+      <div className="min-w-0 overflow-hidden">
         <p className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{label}</p>
-        <p className="text-lg leading-tight font-semibold tabular-nums text-foreground">{value.toLocaleString()}</p>
+        <p className="text-base leading-tight font-semibold tabular-nums text-foreground">{value.toLocaleString()}</p>
       </div>
     </div>
   );

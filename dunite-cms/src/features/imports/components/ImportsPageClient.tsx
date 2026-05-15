@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/features/dashboard/components/PageHeader';
 import type { Role } from '@/features/auth';
@@ -24,12 +26,12 @@ export function ImportsPageClient({ role }: ImportsPageClientProps) {
           description="Read-only import history and queue status. Editors and admins run staging and execution."
         />
         <div className="flex flex-wrap gap-2">
-          <a
+          <Link
             href="/dashboard/imports/operations"
             className="inline-flex items-center rounded-lg border border-foreground/15 bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-muted/60"
           >
             Open import operations
-          </a>
+          </Link>
         </div>
         <ImportHistoryDashboard role={role} />
       </div>
@@ -50,17 +52,17 @@ export function ImportsPageClient({ role }: ImportsPageClientProps) {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="min-w-0 space-y-5 overflow-x-hidden bg-muted/10">
       <div className="flex flex-wrap items-center gap-2 px-4 pt-4 md:px-6">
-        <a
+        <Link
           href="/dashboard/imports/operations"
-          className="inline-flex items-center rounded-lg border border-foreground/15 bg-muted/30 px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+          className="inline-flex items-center rounded-lg border border-primary/20 bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-primary/[0.04]"
         >
           Import operations dashboard
-        </a>
+        </Link>
       </div>
       <ImportWorkflowBody
-        className="p-4 pb-6 md:p-6"
+        className="px-3 pb-3 sm:px-4 md:px-6"
         role={role}
         headerSlot={
           <PageHeader
@@ -69,8 +71,8 @@ export function ImportsPageClient({ role }: ImportsPageClientProps) {
           />
         }
       />
-      <div className="px-4 pb-10 md:px-6">
-        <ImportHistoryDashboard role={role} />
+      <div className="min-w-0 px-3 pb-10 sm:px-4 md:px-6">
+        <ImportHistoryDashboard role={role} className="opacity-95" />
       </div>
     </div>
   );

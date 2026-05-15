@@ -5,6 +5,7 @@ import { useId, useMemo } from 'react';
 import { PLATFORMS } from '@/features/composer/lib/platforms';
 import { cn } from '@/lib/utils';
 
+import { formatPublishAtForDisplay } from '../lib/dates';
 import { ImportIssueCode } from '../validation/issueCodes';
 
 import { ValidationStateBadge, validationStateMeta } from './ValidationStateBadge';
@@ -39,7 +40,7 @@ export function ImportRowInspector({ row, className }: ImportRowInspectorProps) 
     return (
       <aside
         className={cn(
-          'flex min-h-0 shrink-0 flex-col items-center justify-center rounded-xl border border-dashed border-foreground/15 bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground lg:w-[22rem]',
+          'flex min-h-0 min-w-0 shrink-0 flex-col items-center justify-center rounded-xl border border-dashed border-foreground/15 bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground xl:w-[22rem]',
           className,
         )}
         aria-labelledby={headingId}
@@ -61,7 +62,7 @@ export function ImportRowInspector({ row, className }: ImportRowInspectorProps) 
   return (
     <aside
       className={cn(
-        'flex max-h-[min(480px,55vh)] min-h-0 w-full flex-col overflow-y-auto rounded-xl border border-foreground/10 bg-muted/15 p-4 text-sm lg:w-[22rem]',
+        'flex max-h-[min(480px,55vh)] min-h-0 min-w-0 w-full flex-col overflow-y-auto rounded-xl border border-foreground/10 bg-muted/15 p-4 text-sm xl:w-[22rem]',
         className,
       )}
       aria-labelledby={headingId}
@@ -92,11 +93,35 @@ export function ImportRowInspector({ row, className }: ImportRowInspectorProps) 
           <div>
             <dt className="text-muted-foreground">Publish</dt>
             <dd className="mt-0.5 text-foreground">
-              {row.publishAt
-                ? new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' }).format(row.publishAt)
-                : row.publishAtRaw || '—'}
+              {formatPublishAtForDisplay(row.publishAt, row.publishAtRaw, {
+                dateStyle: 'full',
+                timeStyle: 'short',
+              })}
             </dd>
           </div>
+          {row.parseHints.dateParseDiagnostics && (
+            <div className="rounded-md border border-foreground/10 bg-background/80 p-2">
+              <p className="text-muted-foreground">Publish date parsing</p>
+              <div className="mt-1 space-y-1 font-mono text-[10px] text-foreground/90">
+                <div>
+                  <span className="text-muted-foreground">Original: </span>
+                  {row.parseHints.dateParseDiagnostics.original || '—'}
+                </div>
+                {row.parseHints.dateParseDiagnostics.normalizedIso != null && (
+                  <div>
+                    <span className="text-muted-foreground">UTC normalized: </span>
+                    {row.parseHints.dateParseDiagnostics.normalizedIso}
+                  </div>
+                )}
+                {row.parseHints.dateParseDiagnostics.reason && (
+                  <div>
+                    <span className="text-muted-foreground">Note: </span>
+                    {row.parseHints.dateParseDiagnostics.reason}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           <div>
             <dt className="text-muted-foreground">Hashtags</dt>
             <dd className="mt-0.5 break-words text-foreground">{row.hashtags.length ? row.hashtags.join(' ') : '—'}</dd>

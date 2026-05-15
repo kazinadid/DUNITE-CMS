@@ -10,6 +10,14 @@ export interface ImportSchemaFailure {
   detectedRawHeaders: string[];
 }
 
+/** Original cell + normalization outcome for import date diagnostics. */
+export interface ImportDateParseDiagnostics {
+  original: string;
+  normalizedIso?: string | null;
+  reasonCode?: string;
+  reason?: string;
+}
+
 /** Parser-level hints replayed into structured issues by the validation engine. */
 export interface RowParseHints {
   unknownPlatformTokens: string[];
@@ -17,6 +25,8 @@ export interface RowParseHints {
   dateHeuristicKey?: string;
   /** User supplied a date string we could not parse. */
   dateParseFailed?: boolean;
+  /** Original cell, normalized UTC ISO when known, and failure reason. */
+  dateParseDiagnostics?: ImportDateParseDiagnostics;
 }
 
 /**
@@ -27,6 +37,7 @@ export interface NormalizedImportRow {
   sourceRowIndex: number;
   postText: string;
   platforms: PlatformId[];
+  /** Resolved instant (UTC). At runtime may be an ISO string after JSON — coerce before formatting. */
   publishAt: Date | null;
   publishAtRaw?: string;
   mediaUrls: string[];
@@ -192,3 +203,58 @@ export interface ImportJobTableRow extends ImportJobListItem {
   metadata?: Record<string, unknown> | null;
   error_summary?: string | null;
 }
+
+/** Serialized PostgREST / Supabase error for staging diagnostics (client + server logs). */
+export interface SupabaseErrorSnapshot {
+  code: string | null;
+  message: string;
+  details: string | null;
+  hint: string | null;
+}
+
+/**
+ * Structured staging diagnostics returned to the client in development / when staging fails.
+ * Safe for logs — avoid shipping huge row payloads in production responses if tightened later.
+ */
+export interface ImportStagingDiagnostics {
+  phase:
+    | 'precheck'
+    | 'auth'
+    | 'db_role'
+    | 'job_insert'
+    | 'rows_insert'
+    | 'stats'
+    | 'finalize'
+    | 'unexpected';
+  timestamp: string;
+  auth_uid: string;
+  app_role: string;
+  db_current_user_role: string | null;
+  db_role_rpc_error: SupabaseErrorSnapshot | null;
+  insert_job_payload: Record<string, unknown> | null;
+  inserted_job: { id: string; status?: string; total_rows?: number; uploaded_by?: string } | null;
+  job_insert_error: SupabaseErrorSnapshot | null;
+  rows_insert_error: SupabaseErrorSnapshot | null;
+  rows_chunk: { from_row: number; to_row: number; count: number } | null;
+  /** First rows of the failing chunk (truncated JSON) for import_rows failures. */
+  failing_rows_sample: unknown[] | null;
+  stats_error: SupabaseErrorSnapshot | null;
+  finalize_error: SupabaseErrorSnapshot | null;
+  unexpected_message: string | null;
+}
+
+export interface StageImportJobSuccess {
+  ok: true;
+  jobId: string;
+  stagedRows: number;
+  totalRows: number;
+}
+
+export interface StageImportJobFailure {
+  ok: false;
+  message: string;
+  /** Structured diagnostics for operators (includes Supabase error code/message/details/hint when available). */
+  diagnostics?: ImportStagingDiagnostics;
+}
+
+export type StageImportJobResponse = StageImportJobSuccess | StageImportJobFailure;
