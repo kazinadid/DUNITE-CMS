@@ -57,6 +57,8 @@ export const canPublishPost    = (r: Role | null | undefined) => hasPermission(r
 export const canUploadMedia    = (r: Role | null | undefined) => hasPermission(r, 'media.upload');
 /** Batch campaign file parsing / staged import (editors + admins). */
 export const canRunBatchImport = (r: Role | null | undefined) => hasPermission(r, 'imports.manage');
+/** Queuing import jobs / staging rows — frontend gate mirrors parse today; tighten independently later. */
+export const canStageBatchImport = canRunBatchImport;
 export const canManageUsers    = (r: Role | null | undefined) => hasPermission(r, 'users.manage');
 export const canManageSocial   = (r: Role | null | undefined) => hasPermission(r, 'social.manage');
 

@@ -5,15 +5,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
+import type { Role } from '@/features/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { canRunBatchImport } from '@/lib/rbac';
 
 import { useBatchImportWorkflow } from '../hooks/useBatchImportWorkflow';
+import { useImportPreviewSession } from '../hooks/useImportPreviewSession';
+import { groupIssuesFromRows } from '../lib/groupIssuesFromRows';
 
 import { ImportCampaignColumnGuide } from './ImportCampaignColumnGuide';
 import { ImportDropzone } from './ImportDropzone';
+import { ImportGroupedIssuesPanel } from './ImportGroupedIssuesPanel';
+import { ImportPhaseStepper } from './ImportPhaseStepper';
+import { ImportPreviewMetricsCards } from './ImportPreviewMetricsCards';
 import { ImportPreviewTable } from './ImportPreviewTable';
+import { ImportPreviewToolbar } from './ImportPreviewToolbar';
 import { ImportRowInspector } from './ImportRowInspector';
 import { ImportSchemaBlockedPanel } from './ImportSchemaBlockedPanel';
 import { ValidationSummaryBar } from './ValidationSummaryBar';
@@ -28,27 +36,56 @@ const BUSY_PHASES = new Set([
 interface ImportWorkflowBodyProps {
   className?: string;
   headerSlot?: ReactNode;
+  /** When omitted, preparation actions stay enabled (e.g. embedded dialog with implicit editor). */
+  role?: Role;
 }
 
-export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBodyProps) {
-  const { state, runParse, cancel, reset } = useBatchImportWorkflow();
+export function ImportWorkflowBody({ className, headerSlot, role }: ImportWorkflowBodyProps) {
+  const { state, runParse, cancel, reset, revalidateCurrentImport, retryLastParse } = useBatchImportWorkflow();
   const busy = BUSY_PHASES.has(state.phase);
+  const canMutate = role == null || canRunBatchImport(role);
+
+  const previewResetKey = useMemo(
+    () => `${state.fileName ?? ''}|${state.summary?.durationMs ?? 0}`,
+    [state.fileName, state.summary?.durationMs],
+  );
+
+  const preview = useImportPreviewSession({
+    rows: state.rows,
+    resetKey: previewResetKey,
+  });
 
   const [selectedSourceIndex, setSelectedSourceIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    if (state.rows.length === 0) setSelectedSourceIndex(null);
+    if (state.rows.length === 0) {
+      queueMicrotask(() => setSelectedSourceIndex(null));
+    }
   }, [state.rows.length]);
 
   useEffect(() => {
     if (state.phase === 'idle' || state.phase === 'reading' || state.phase === 'parsing') {
-      setSelectedSourceIndex(null);
+      queueMicrotask(() => setSelectedSourceIndex(null));
     }
   }, [state.phase]);
+
+  useEffect(() => {
+    if (
+      selectedSourceIndex != null &&
+      !preview.displayedRows.some((r) => r.sourceRowIndex === selectedSourceIndex)
+    ) {
+      queueMicrotask(() => setSelectedSourceIndex(null));
+    }
+  }, [preview.displayedRows, selectedSourceIndex]);
 
   const selectedRow = useMemo(
     () => state.rows.find((r) => r.sourceRowIndex === selectedSourceIndex) ?? null,
     [state.rows, selectedSourceIndex],
+  );
+
+  const groupedVisible = useMemo(
+    () => groupIssuesFromRows(preview.displayedRows, { limit: 10 }),
+    [preview.displayedRows],
   );
 
   useEffect(() => {
@@ -73,12 +110,31 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
   const previewCardExpanded =
     state.rows.length > 0 || (state.phase === 'schema_blocked' && state.schemaFailure != null);
 
+  const showPreviewChrome = state.phase === 'ready' && state.rows.length > 0;
+
+  const handleClearImport = () => {
+    setSelectedSourceIndex(null);
+    reset();
+  };
+
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col gap-6', className)}>
       {headerSlot}
 
+      <ImportPhaseStepper phase={state.phase} />
+
       {state.summary?.validation && !busy && (
         <ValidationSummaryBar validation={state.summary.validation} pending={busy} />
+      )}
+
+      {showPreviewChrome && preview.isFilteredView && preview.visibleValidation && (
+        <div className="space-y-2">
+          <ImportPreviewMetricsCards
+            validation={preview.visibleValidation}
+            subtitle="Metrics for the visible subset (search, filters, or hidden rows)."
+          />
+          <ImportGroupedIssuesPanel errors={groupedVisible.errors} warnings={groupedVisible.warnings} />
+        </div>
       )}
 
       <div className="grid min-h-0 gap-6 lg:grid-cols-[1fr,minmax(0,1.15fr)]">
@@ -86,12 +142,12 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
           <CardHeader className="border-b bg-muted/30">
             <CardTitle className="text-base">Upload</CardTitle>
             <CardDescription>
-              Files stay in-browser for parsing and validation. Nothing is committed to posts or media tables here —
-              staging only.
+              In-browser parse and validation only. Nothing is written to posts until a future staging commit runs on the
+              server.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4 pt-4">
-            <ImportDropzone onFile={(file) => void runParse(file)} disabled={false} busy={busy} />
+            <CardContent className="flex flex-col gap-4 pt-4">
+            <ImportDropzone onFile={(file) => void runParse(file)} disabled={!canMutate} busy={busy} />
 
             <ImportCampaignColumnGuide />
 
@@ -174,9 +230,21 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
             )}
 
             {state.phase === 'error' && state.fatalMessage && (
-              <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>{state.fatalMessage}</span>
+              <div className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                <div className="flex items-start gap-2">
+                  <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <span>{state.fatalMessage}</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-fit border-destructive/40"
+                  disabled={!canMutate || !state.fileName || busy}
+                  onClick={() => retryLastParse()}
+                >
+                  Retry parse
+                </Button>
               </div>
             )}
 
@@ -186,6 +254,7 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
                 size="sm"
                 type="button"
                 className="w-fit"
+                disabled={!canMutate}
                 onClick={() => {
                   setSelectedSourceIndex(null);
                   reset();
@@ -199,12 +268,12 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
 
         <Card className="flex min-h-0 min-w-0 flex-col border-foreground/10">
           <CardHeader className="border-b bg-muted/30">
-            <CardTitle className="text-base">Preview & validation detail</CardTitle>
+            <CardTitle className="text-base">Preview & validation</CardTitle>
             <CardDescription>
               {state.rows.length > 0 ? (
                 <>
-                  Inline validation badges per row. Select a row for accessible details. Virtualized table keeps large
-                  files responsive.
+                  Virtualized grid, filters, and row inspector. Use preparation actions to narrow what would be staged
+                  — execution is not run here.
                 </>
               ) : (
                 <>Upload a file to populate the preview. Row-level issues and staging readiness appear after validation.</>
@@ -220,15 +289,47 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
             {state.phase === 'schema_blocked' && state.schemaFailure ? (
               <ImportSchemaBlockedPanel failure={state.schemaFailure} className="w-full lg:flex-1" />
             ) : (
-              <>
-                <ImportPreviewTable
-                  rows={state.rows}
-                  selectedSourceIndex={selectedSourceIndex}
-                  onSelectSourceIndex={setSelectedSourceIndex}
-                  className={cn('min-w-0', state.rows.length > 0 ? 'min-h-0 flex-1' : 'flex-none shrink-0')}
-                />
-                <ImportRowInspector row={selectedRow} className="shrink-0 lg:max-w-sm" />
-              </>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+                  {showPreviewChrome && (
+                    <ImportPreviewToolbar
+                      searchInput={preview.searchInput}
+                      onSearchInputChange={preview.setSearchInput}
+                      filterMode={preview.filterMode}
+                      onFilterModeChange={preview.setFilterMode}
+                      displayedCount={preview.displayedRows.length}
+                      totalParsedCount={state.rows.length}
+                      excludedCount={preview.excludedSourceIndices.size}
+                      bulkSelectedCount={preview.bulkSelected.size}
+                      onSelectAllVisible={preview.selectAllVisible}
+                      onClearBulkSelection={preview.clearBulkSelection}
+                      onRemoveSelected={preview.removeSelectedRows}
+                      onRemoveInvalid={preview.removeInvalidRows}
+                      onRemoveSkipped={preview.removeSkippedRows}
+                      onClearExclusions={preview.clearExclusions}
+                      onRevalidate={() => {
+                        revalidateCurrentImport();
+                        toast.message('Re-validated import rows.');
+                      }}
+                      onRetryParse={() => void retryLastParse()}
+                      onClearImport={handleClearImport}
+                      canMutate={canMutate}
+                      revalidateDisabled={state.phase !== 'ready' || state.rows.length === 0 || busy}
+                      retryDisabled={!state.fileName || busy}
+                    />
+                  )}
+                  <ImportPreviewTable
+                    rows={showPreviewChrome ? preview.displayedRows : state.rows}
+                    selectedSourceIndex={selectedSourceIndex}
+                    onRowActivate={setSelectedSourceIndex}
+                    bulkSelected={preview.bulkSelected}
+                    onToggleBulkSelect={preview.toggleBulkSelect}
+                    readOnly={!canMutate}
+                    className={cn('min-w-0', state.rows.length > 0 ? 'min-h-0 flex-1' : 'flex-none shrink-0')}
+                  />
+                </div>
+                <ImportRowInspector row={selectedRow} className="shrink-0 lg:max-w-sm lg:self-stretch" />
+              </div>
             )}
           </CardContent>
         </Card>

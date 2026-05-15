@@ -39,6 +39,7 @@ export function useBatchImportWorkflow() {
 
   const abortRef = useRef<AbortController | null>(null);
   const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFileRef = useRef<File | null>(null);
 
   const tz = useMemo(() => getDefaultTimeZone(), []);
 
@@ -60,6 +61,7 @@ export function useBatchImportWorkflow() {
       fatalMessage: null,
       schemaFailure: null,
     }));
+    lastFileRef.current = null;
   }, []);
 
   const reset = useCallback(() => {
@@ -76,6 +78,7 @@ export function useBatchImportWorkflow() {
       fatalMessage: null,
       schemaFailure: null,
     });
+    lastFileRef.current = null;
   }, []);
 
   const runParse = useCallback(
@@ -102,6 +105,8 @@ export function useBatchImportWorkflow() {
         if (file.size > 40 * 1024 * 1024) {
           throw new Error('File exceeds the 40 MB safety limit. Split into smaller uploads.');
         }
+
+        lastFileRef.current = file;
 
         setState((s) => ({ ...s, phase: 'parsing', progress: 0.08 }));
         setDisplayDebounced(8);
@@ -213,6 +218,7 @@ export function useBatchImportWorkflow() {
           fatalMessage: msg,
           schemaFailure: null,
         }));
+        lastFileRef.current = null;
       } finally {
         abortRef.current = null;
       }
@@ -220,10 +226,34 @@ export function useBatchImportWorkflow() {
     [setDisplayDebounced, tz],
   );
 
+  const revalidateCurrentImport = useCallback(() => {
+    setState((s) => {
+      if (s.rows.length === 0 || s.phase !== 'ready' || !s.summary) return s;
+      runImportValidationPipeline(s.rows as NormalizedImportRow[], { timezone: tz });
+      const validation = buildImportValidationSummary(s.rows);
+      const summary: ImportParseSummary = {
+        ...s.summary,
+        totalRows: validation.totalRows,
+        validRows: validation.validRows,
+        rowsWithErrors: validation.invalidRows,
+        rowsWithWarnings: validation.warningRows + validation.duplicateRows,
+        validation,
+      };
+      return { ...s, rows: [...s.rows], summary };
+    });
+  }, [tz]);
+
+  const retryLastParse = useCallback(() => {
+    const f = lastFileRef.current;
+    if (f) void runParse(f);
+  }, [runParse]);
+
   return {
     state,
     runParse,
     cancel,
     reset,
+    revalidateCurrentImport,
+    retryLastParse,
   };
 }

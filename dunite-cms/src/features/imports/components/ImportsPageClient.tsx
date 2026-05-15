@@ -1,6 +1,5 @@
 'use client';
 
-import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/features/dashboard/components/PageHeader';
 import type { Role } from '@/features/auth';
@@ -34,10 +33,11 @@ export function ImportsPageClient({ role }: ImportsPageClientProps) {
   return (
     <ImportWorkflowBody
       className="p-4 pb-10 md:p-6"
+      role={role}
       headerSlot={
         <PageHeader
           title="Campaign import"
-          description="Parse CSV/XLSX sheets into normalized campaign rows. The next step will stage rows in Supabase `import_jobs` / `import_rows` and commit posts when you wire the backend action."
+          description="Preview-only workflow: parse, validate, filter, and inspect rows before any staging job runs. Posts are never created on this screen."
         />
       }
     />

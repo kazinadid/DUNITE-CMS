@@ -9,7 +9,14 @@ export { runImportValidationPipeline } from './validation/importValidationPipeli
 export { buildImportValidationSummary } from './validation/buildValidationSummary';
 export { ImportIssueCode } from './validation/issueCodes';
 export type { ValidationIssue, IssueSeverity } from './validation/validationTypes';
-export { ValidationSummaryBar } from './components/ValidationSummaryBar';
+export { ValidationStateBadge, validationStateMeta } from './components/ValidationStateBadge';
+export { ImportPhaseStepper } from './components/ImportPhaseStepper';
+export { useDebouncedValue } from './hooks/useDebouncedValue';
+export { useImportPreviewSession } from './hooks/useImportPreviewSession';
+export { filterImportPreviewRows } from './lib/previewRowQuery';
+export type { ImportPreviewFilterMode } from './lib/previewRowQuery';
+export { groupIssuesFromRows } from './lib/groupIssuesFromRows';
+export type { GroupedIssueRollup } from './lib/groupIssuesFromRows';
 export { buildImportPreviewPayload } from './preview/prepareImportPreview';
 export type { ImportPreviewPayload } from './preview/prepareImportPreview';
 export type {

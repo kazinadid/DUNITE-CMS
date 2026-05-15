@@ -9,33 +9,42 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Table2 } from 'lucide-react';
+import { Link2, Table2 } from 'lucide-react';
 
 import { PLATFORMS } from '@/features/composer/lib/platforms';
 import { cn } from '@/lib/utils';
 
+import { ImportIssueCode } from '../validation/issueCodes';
+
+import { ValidationStateBadge } from './ValidationStateBadge';
+
 import type { NormalizedImportRow } from '../types';
 
-const ROW_HEIGHT = 44;
+const ROW_HEIGHT = 48;
 const OVERSCAN = 10;
 const VIEWPORT_FALLBACK_PX = 360;
+const COL_COUNT = 10;
 
-const STATE_STYLES: Record<
-  NormalizedImportRow['validationState'],
-  { label: string; className: string }
-> = {
-  valid: { label: 'Valid', className: 'bg-emerald-500/15 text-emerald-900' },
-  warning: { label: 'Warning', className: 'bg-amber-500/15 text-amber-950' },
-  duplicate: { label: 'Duplicate', className: 'bg-violet-500/15 text-violet-950' },
-  invalid: { label: 'Invalid', className: 'bg-destructive/15 text-destructive' },
-  skipped: { label: 'Skipped', className: 'bg-muted text-muted-foreground' },
-};
+const DUP_CODES = new Set<string>([
+  ImportIssueCode.DUPLICATE_CONTENT,
+  ImportIssueCode.DUPLICATE_MEDIA_URL,
+  ImportIssueCode.DUPLICATE_SCHEDULE,
+]);
 
-interface ImportPreviewTableProps {
+export interface ImportPreviewTableProps {
   rows: NormalizedImportRow[];
   selectedSourceIndex: number | null;
-  onSelectSourceIndex: (index: number | null) => void;
+  onRowActivate: (sourceRowIndex: number) => void;
+  bulkSelected: ReadonlySet<number>;
+  onToggleBulkSelect: (sourceRowIndex: number) => void;
+  readOnly?: boolean;
   className?: string;
+}
+
+function duplicateCellLabel(row: NormalizedImportRow): string {
+  if (row.validationState === 'duplicate') return 'Duplicate row';
+  if (row.issues.some((i) => DUP_CODES.has(i.code))) return 'Dup signal';
+  return '—';
 }
 
 /** Static empty state — no scroll, no virtualization, no observers. */
@@ -69,11 +78,13 @@ function ImportPreviewTableEmpty({ className }: { className?: string }) {
   );
 }
 
-/** Virtualized preview — mounts only when there is at least one row so hooks stay off the empty path. */
 function ImportPreviewTableVirtualized({
   rows,
   selectedSourceIndex,
-  onSelectSourceIndex,
+  onRowActivate,
+  bulkSelected,
+  onToggleBulkSelect,
+  readOnly,
   className,
 }: ImportPreviewTableProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -123,123 +134,177 @@ function ImportPreviewTableVirtualized({
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col gap-2', className)}>
       <p className="text-xs text-muted-foreground">
-        Virtualized window: rows {start + 1}–{Math.min(end, rows.length)} of {rows.length}. Keyboard: focus a row and
-        press Enter to inspect details.
+        Virtualized: rows {start + 1}–{Math.min(end, rows.length)} of {rows.length}. Click a row to inspect; use
+        checkboxes for bulk preparation.
       </p>
       <div
         ref={scrollRef}
         onScroll={onScroll}
         className="max-h-[min(420px,50vh)] min-h-0 flex-1 overflow-auto rounded-lg border ring-1 ring-foreground/10"
       >
-        <table
-          role="grid"
-          aria-rowcount={rows.length}
-          aria-colcount={6}
-          className="w-full min-w-[760px] border-collapse text-left text-xs"
-        >
-          <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
-            <tr className="border-b">
-              <th scope="col" className="px-2 py-2 font-medium">
-                #
-              </th>
-              <th scope="col" className="px-2 py-2 font-medium">
-                Status
-              </th>
-              <th scope="col" className="px-2 py-2 font-medium">
-                Issues
-              </th>
-              <th scope="col" className="px-2 py-2 font-medium">
-                Platforms
-              </th>
-              <th scope="col" className="px-2 py-2 font-medium">
-                Publish
-              </th>
-              <th scope="col" className="px-2 py-2 font-medium">
-                Preview
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {topPad > 0 && (
-              <tr style={{ height: topPad }} aria-hidden>
-                <td colSpan={6} />
+        <div className="overflow-x-auto">
+          <table
+            role="grid"
+            aria-rowcount={rows.length}
+            aria-colcount={COL_COUNT}
+            className="w-full min-w-[1240px] border-collapse text-left text-xs"
+          >
+            <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
+              <tr className="border-b">
+                <th scope="col" className="w-10 px-1 py-2 text-center font-medium">
+                  <span className="sr-only">Select</span>
+                </th>
+                <th scope="col" className="w-10 px-1 py-2 font-medium">
+                  #
+                </th>
+                <th scope="col" className="min-w-[88px] px-2 py-2 font-medium">
+                  Status
+                </th>
+                <th scope="col" className="min-w-[200px] px-2 py-2 font-medium">
+                  Post text
+                </th>
+                <th scope="col" className="min-w-[100px] px-2 py-2 font-medium">
+                  Platforms
+                </th>
+                <th scope="col" className="min-w-[120px] px-2 py-2 font-medium">
+                  Publish
+                </th>
+                <th scope="col" className="min-w-[120px] px-2 py-2 font-medium">
+                  Hashtags
+                </th>
+                <th scope="col" className="min-w-[100px] px-2 py-2 font-medium">
+                  Media
+                </th>
+                <th scope="col" className="min-w-[72px] px-2 py-2 font-medium">
+                  Issues
+                </th>
+                <th scope="col" className="min-w-[88px] px-2 py-2 font-medium">
+                  Duplicate
+                </th>
               </tr>
-            )}
-            {slice.map((r) => {
-              const plat = r.platforms.map((p) => PLATFORMS[p]?.shortLabel ?? p).join(', ');
-              const prev = r.postText.slice(0, 120) + (r.postText.length > 120 ? '…' : '');
-              const when = r.publishAt
-                ? new Intl.DateTimeFormat(undefined, {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  }).format(r.publishAt)
-                : '—';
-              const sel = selectedSourceIndex === r.sourceRowIndex;
-              const badge = STATE_STYLES[r.validationState];
-              const errCount = r.issues.filter((i) => i.severity === 'error').length;
-              const warnCount = r.issues.filter((i) => i.severity === 'warning').length;
-
-              return (
-                <tr
-                  key={r.sourceRowIndex}
-                  role="row"
-                  tabIndex={0}
-                  aria-selected={sel}
-                  aria-label={`Row ${r.sourceRowIndex}, ${r.validationState}, ${r.issues.length} issues`}
-                  className={cn(
-                    'cursor-pointer border-b border-foreground/5 outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring',
-                    sel && 'bg-primary/5',
-                  )}
-                  style={{ height: ROW_HEIGHT }}
-                  onClick={() => onSelectSourceIndex(r.sourceRowIndex)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onSelectSourceIndex(r.sourceRowIndex);
-                    }
-                  }}
-                >
-                  <td className="px-2 py-1.5 align-middle text-muted-foreground">{r.sourceRowIndex}</td>
-                  <td className="px-2 py-1.5 align-middle">
-                    <span
-                      className={cn(
-                        'inline-flex max-w-[100px] rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                        badge.className,
-                      )}
-                    >
-                      {badge.label}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 align-middle tabular-nums text-muted-foreground">
-                    {errCount > 0 && <span className="text-destructive">{errCount}E</span>}
-                    {errCount > 0 && warnCount > 0 && ' '}
-                    {warnCount > 0 && <span className="text-amber-800">{warnCount}W</span>}
-                    {errCount === 0 && warnCount === 0 && '—'}
-                  </td>
-                  <td className="max-w-[120px] truncate px-2 py-1.5 align-middle">{plat || '—'}</td>
-                  <td className="whitespace-nowrap px-2 py-1.5 align-middle">{when}</td>
-                  <td className="max-w-[280px] px-2 py-1.5 align-middle">
-                    <div className="truncate" title={r.postText}>
-                      {prev || '—'}
-                    </div>
-                  </td>
+            </thead>
+            <tbody>
+              {topPad > 0 && (
+                <tr style={{ height: topPad }} aria-hidden>
+                  <td colSpan={COL_COUNT} />
                 </tr>
-              );
-            })}
-            {bottomPad > 0 && (
-              <tr style={{ height: bottomPad }} aria-hidden>
-                <td colSpan={6} />
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+              {slice.map((r) => {
+                const plat = r.platforms.map((p) => PLATFORMS[p]?.shortLabel ?? p).join(', ');
+                const postPreview = r.postText.slice(0, 80) + (r.postText.length > 80 ? '…' : '');
+                const when = r.publishAt
+                  ? new Intl.DateTimeFormat(undefined, {
+                      dateStyle: 'short',
+                      timeStyle: 'short',
+                    }).format(r.publishAt)
+                  : r.publishAtRaw
+                    ? String(r.publishAtRaw).slice(0, 24)
+                    : '—';
+                const tags = r.hashtags.slice(0, 4).join(', ') + (r.hashtags.length > 4 ? '…' : '');
+                const mediaLabel =
+                  r.mediaUrls.length === 0 ? '—' : r.mediaUrls.length === 1 ? '1 link' : `${r.mediaUrls.length} links`;
+                const sel = selectedSourceIndex === r.sourceRowIndex;
+                const checked = bulkSelected.has(r.sourceRowIndex);
+                const errCount = r.issues.filter((i) => i.severity === 'error').length;
+                const warnCount = r.issues.filter((i) => i.severity === 'warning').length;
+                const dupLabel = duplicateCellLabel(r);
+
+                return (
+                  <tr
+                    key={r.sourceRowIndex}
+                    role="row"
+                    tabIndex={0}
+                    aria-selected={sel}
+                    aria-label={`Row ${r.sourceRowIndex}, ${r.validationState}`}
+                    className={cn(
+                      'cursor-pointer border-b border-foreground/5 outline-none transition-colors hover:bg-muted/45 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                      sel && 'bg-primary/8',
+                    )}
+                    style={{ height: ROW_HEIGHT }}
+                    onClick={() => onRowActivate(r.sourceRowIndex)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onRowActivate(r.sourceRowIndex);
+                      }
+                    }}
+                  >
+                    <td
+                      className="px-1 align-middle"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-3.5 accent-primary"
+                        checked={checked}
+                        disabled={readOnly}
+                        aria-label={`Select row ${r.sourceRowIndex}`}
+                        onChange={() => onToggleBulkSelect(r.sourceRowIndex)}
+                      />
+                    </td>
+                    <td className="px-1 py-1.5 align-middle tabular-nums text-muted-foreground">{r.sourceRowIndex}</td>
+                    <td className="px-2 py-1.5 align-middle">
+                      <ValidationStateBadge state={r.validationState} />
+                    </td>
+                    <td className="max-w-[240px] px-2 py-1.5 align-middle">
+                      <div className="truncate" title={r.postText}>
+                        {postPreview || '—'}
+                      </div>
+                    </td>
+                    <td className="max-w-[120px] truncate px-2 py-1.5 align-middle">{plat || '—'}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 align-middle text-[11px]">{when}</td>
+                    <td className="max-w-[140px] px-2 py-1.5 align-middle">
+                      <div className="truncate text-[11px]" title={r.hashtags.join(' ')}>
+                        {tags || '—'}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 align-middle text-[11px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-1">
+                        <Link2 className="size-3 shrink-0 opacity-60" aria-hidden />
+                        {mediaLabel}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 align-middle tabular-nums text-[11px] text-muted-foreground">
+                      {errCount > 0 && <span className="text-destructive">{errCount}E</span>}
+                      {errCount > 0 && warnCount > 0 && ' '}
+                      {warnCount > 0 && <span className="text-amber-800">{warnCount}W</span>}
+                      {errCount === 0 && warnCount === 0 && '—'}
+                    </td>
+                    <td className="px-2 py-1.5 align-middle text-[11px] text-muted-foreground">
+                      {dupLabel === '—' ? (
+                        '—'
+                      ) : (
+                        <span
+                          className={cn(
+                            'inline-flex rounded px-1.5 py-0.5 font-medium',
+                            r.validationState === 'duplicate'
+                              ? 'bg-violet-500/15 text-violet-950'
+                              : 'bg-violet-500/10 text-violet-900',
+                          )}
+                        >
+                          {dupLabel}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {bottomPad > 0 && (
+                <tr style={{ height: bottomPad }} aria-hidden>
+                  <td colSpan={COL_COUNT} />
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
 
 /**
- * Campaign import preview: compact empty state (no scroll / no virtualization) or virtualized table when data exists.
+ * Campaign import preview: compact empty state or virtualized grid with selection prep.
  */
 export function ImportPreviewTable(props: ImportPreviewTableProps) {
   if (props.rows.length === 0) {

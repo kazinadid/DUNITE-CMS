@@ -39,7 +39,7 @@ export function BatchImportDialog({ open, onOpenChange, role }: BatchImportDialo
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-          <ImportWorkflowBody className="p-4" />
+          <ImportWorkflowBody className="p-4" role={role} />
         </div>
       </DialogContent>
     </Dialog>
