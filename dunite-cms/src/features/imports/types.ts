@@ -98,3 +98,17 @@ export type PreviewSlice = {
   start: number;
   end: number;
 };
+
+/** Server list projection for import job history UI. */
+export interface ImportJobListItem {
+  id: string;
+  file_name: string;
+  status: string;
+  total_rows: number | null;
+  imported_rows: number | null;
+  valid_rows: number | null;
+  invalid_rows: number | null;
+  duplicate_rows: number | null;
+  created_at: string;
+  updated_at: string;
+}

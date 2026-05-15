@@ -23,7 +23,7 @@ import { ImportPreviewMetricsCards } from './ImportPreviewMetricsCards';
 import { ImportPreviewTable } from './ImportPreviewTable';
 import { ImportPreviewToolbar } from './ImportPreviewToolbar';
 import { ImportRowInspector } from './ImportRowInspector';
-import { ImportSchemaBlockedPanel } from './ImportSchemaBlockedPanel';
+import { ImportStagingControls } from './ImportStagingControls';
 import { ValidationSummaryBar } from './ValidationSummaryBar';
 
 const BUSY_PHASES = new Set([
@@ -138,6 +138,18 @@ export function ImportWorkflowBody({ className, headerSlot, role }: ImportWorkfl
       )}
 
       <div className="grid min-h-0 gap-6 lg:grid-cols-[1fr,minmax(0,1.15fr)]">
+        {state.phase === 'ready' && state.rows.length > 0 && canMutate && (
+          <div className="lg:col-span-2">
+            <ImportStagingControls
+              canMutate={canMutate}
+              rows={state.rows}
+              fileName={state.fileName}
+              fileKind={state.fileKind}
+              workflowReady={state.phase === 'ready' && state.rows.length > 0}
+            />
+          </div>
+        )}
+
         <Card className="min-h-0 border-foreground/10">
           <CardHeader className="border-b bg-muted/30">
             <CardTitle className="text-base">Upload</CardTitle>
