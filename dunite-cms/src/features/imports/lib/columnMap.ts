@@ -1,53 +1,18 @@
 /**
- * Header normalization: spreadsheets ship many synonyms. Match case-insensitively
- * with light punctuation stripping.
+ * Map raw row keys to campaign fields. Synonyms come from {@link importFieldSchema}.
+ * Primary match: strict normalized alias; secondary: light fuzzy match for legacy sheets.
  */
 
-const POST_TEXT_ALIASES = [
-  'post',
-  'post_text',
-  'post text',
-  'body',
-  'content',
-  'caption',
-  'text',
-  'message',
-  'copy',
-];
+import { IMPORT_FIELD_ALIASES, normalizeSpreadsheetHeaderKey } from './importFieldSchema';
 
-const PLATFORM_ALIASES = ['platform', 'platforms', 'channels', 'network', 'social'];
-
-const DATE_ALIASES = [
-  'publish_date',
-  'publish date',
-  'published_at',
-  'scheduled_at',
-  'scheduled at',
-  'date',
-  'datetime',
-  'time',
-  'publish_at',
-];
-
-const MEDIA_ALIASES = [
-  'media_url',
-  'media',
-  'media_urls',
-  'media urls',
-  'image',
-  'images',
-  'photo',
-  'photos',
-  'attachment',
-  'attachments',
-  'url',
-  'urls',
-];
-
-const TAG_ALIASES = ['hashtags', 'hashtag', 'tags', 'tag'];
+const POST_TEXT_ALIASES = IMPORT_FIELD_ALIASES.post_text;
+const PLATFORM_ALIASES = IMPORT_FIELD_ALIASES.platform;
+const DATE_ALIASES = IMPORT_FIELD_ALIASES.publish_date;
+const MEDIA_ALIASES = IMPORT_FIELD_ALIASES.media_url;
+const TAG_ALIASES = IMPORT_FIELD_ALIASES.hashtags;
 
 function normKey(k: string): string {
-  return k.trim().toLowerCase().replace(/[#\s]+/g, '_').replace(/_+/g, '_');
+  return normalizeSpreadsheetHeaderKey(k);
 }
 
 function pickColumn(

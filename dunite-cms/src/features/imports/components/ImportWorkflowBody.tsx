@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -11,8 +11,12 @@ import { cn } from '@/lib/utils';
 
 import { useBatchImportWorkflow } from '../hooks/useBatchImportWorkflow';
 
+import { ImportCampaignColumnGuide } from './ImportCampaignColumnGuide';
 import { ImportDropzone } from './ImportDropzone';
 import { ImportPreviewTable } from './ImportPreviewTable';
+import { ImportRowInspector } from './ImportRowInspector';
+import { ImportSchemaBlockedPanel } from './ImportSchemaBlockedPanel';
+import { ValidationSummaryBar } from './ValidationSummaryBar';
 
 const BUSY_PHASES = new Set([
   'reading',
@@ -30,6 +34,23 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
   const { state, runParse, cancel, reset } = useBatchImportWorkflow();
   const busy = BUSY_PHASES.has(state.phase);
 
+  const [selectedSourceIndex, setSelectedSourceIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (state.rows.length === 0) setSelectedSourceIndex(null);
+  }, [state.rows.length]);
+
+  useEffect(() => {
+    if (state.phase === 'idle' || state.phase === 'reading' || state.phase === 'parsing') {
+      setSelectedSourceIndex(null);
+    }
+  }, [state.phase]);
+
+  const selectedRow = useMemo(
+    () => state.rows.find((r) => r.sourceRowIndex === selectedSourceIndex) ?? null,
+    [state.rows, selectedSourceIndex],
+  );
+
   useEffect(() => {
     if (state.phase === 'error' && state.fatalMessage) {
       toast.error(state.fatalMessage);
@@ -38,27 +59,41 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
       toast.message('Import cancelled');
     }
     if (state.phase === 'ready' && state.summary) {
+      const v = state.summary.validation;
       toast.success(
-        `Parsed ${state.summary.totalRows.toLocaleString()} row(s) in ${(state.summary.durationMs / 1000).toFixed(1)}s`,
+        `Validated ${state.summary.totalRows.toLocaleString()} row(s) in ${(state.summary.durationMs / 1000).toFixed(1)}s — ${v.invalidRows} invalid, ${v.skippedRows} skipped, readiness ${v.readinessPct}%.`,
       );
     }
-  }, [state.phase, state.fatalMessage, state.summary]);
+    if (state.phase === 'schema_blocked' && state.schemaFailure) {
+      const miss = state.schemaFailure.missingRequired.join(', ');
+      toast.error(`Import blocked: required column(s) missing (${miss}). Use the template below and try again.`);
+    }
+  }, [state.phase, state.fatalMessage, state.summary, state.schemaFailure]);
+
+  const previewCardExpanded =
+    state.rows.length > 0 || (state.phase === 'schema_blocked' && state.schemaFailure != null);
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col gap-6', className)}>
       {headerSlot}
 
-      <div className="grid min-h-0 gap-6 lg:grid-cols-[1fr,minmax(0,1.1fr)]">
+      {state.summary?.validation && !busy && (
+        <ValidationSummaryBar validation={state.summary.validation} pending={busy} />
+      )}
+
+      <div className="grid min-h-0 gap-6 lg:grid-cols-[1fr,minmax(0,1.15fr)]">
         <Card className="min-h-0 border-foreground/10">
           <CardHeader className="border-b bg-muted/30">
             <CardTitle className="text-base">Upload</CardTitle>
             <CardDescription>
-              Files never leave your browser during parsing. Large workbooks are processed in chunks to keep the UI
-              responsive.
+              Files stay in-browser for parsing and validation. Nothing is committed to posts or media tables here —
+              staging only.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 pt-4">
             <ImportDropzone onFile={(file) => void runParse(file)} disabled={false} busy={busy} />
+
+            <ImportCampaignColumnGuide />
 
             {busy && (
               <div className="space-y-3 rounded-xl border border-foreground/10 bg-background p-4">
@@ -68,7 +103,7 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
                     {state.phase === 'reading' && 'Reading file…'}
                     {state.phase === 'parsing' && 'Parsing spreadsheet…'}
                     {state.phase === 'normalizing' && 'Mapping columns…'}
-                    {state.phase === 'validating' && 'Validating rows…'}
+                    {state.phase === 'validating' && 'Running validation engine…'}
                   </span>
                   <Button variant="ghost" size="xs" type="button" onClick={() => cancel()}>
                     Cancel
@@ -102,11 +137,11 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
               <div className="grid gap-2 rounded-xl border border-foreground/10 bg-muted/30 p-4 text-sm">
                 <h3 className="flex items-center gap-2 font-medium text-foreground">
                   <CheckCircle2 className="size-4 text-emerald-600" aria-hidden />
-                  Parsing summary
+                  Run summary
                 </h3>
                 <ul className="grid gap-1 text-muted-foreground sm:grid-cols-2">
                   <li>
-                    Rows parsed:{' '}
+                    Rows:{' '}
                     <span className="font-medium text-foreground">
                       {state.summary.totalRows.toLocaleString()}
                     </span>
@@ -115,20 +150,23 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
                     Duration: <span className="font-medium text-foreground">{state.summary.durationMs} ms</span>
                   </li>
                   <li>
-                    Ready rows:{' '}
-                    <span className="font-medium text-foreground">{state.summary.validRows.toLocaleString()}</span>
+                    Invalid (blocking):{' '}
+                    <span className="font-medium text-destructive">
+                      {state.summary.validation.invalidRows.toLocaleString()}
+                    </span>
                   </li>
                   <li>
-                    Rows with errors:{' '}
-                    <span className="font-medium text-destructive">
-                      {state.summary.rowsWithErrors.toLocaleString()}
+                    Skipped empty:{' '}
+                    <span className="font-medium text-foreground">
+                      {state.summary.validation.skippedRows.toLocaleString()}
                     </span>
                   </li>
                   <li className="flex items-start gap-2 sm:col-span-2">
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
                     <span>
-                      Rows with warnings: {state.summary.rowsWithWarnings.toLocaleString()} (platform media rules,
-                      unknown tokens, etc.)
+                      Readiness {state.summary.validation.readinessPct}% ·{' '}
+                      {state.summary.validation.stagingReadyRows.toLocaleString()} rows could be staged after server
+                      checks.
                     </span>
                   </li>
                 </ul>
@@ -143,7 +181,16 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
             )}
 
             {state.phase !== 'idle' && !busy && (
-              <Button variant="outline" size="sm" type="button" className="w-fit" onClick={() => reset()}>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                className="w-fit"
+                onClick={() => {
+                  setSelectedSourceIndex(null);
+                  reset();
+                }}
+              >
                 Reset upload
               </Button>
             )}
@@ -152,14 +199,37 @@ export function ImportWorkflowBody({ className, headerSlot }: ImportWorkflowBody
 
         <Card className="flex min-h-0 min-w-0 flex-col border-foreground/10">
           <CardHeader className="border-b bg-muted/30">
-            <CardTitle className="text-base">Preview (import staging)</CardTitle>
+            <CardTitle className="text-base">Preview & validation detail</CardTitle>
             <CardDescription>
-              Validation is client-side only. The preview grid virtualizes rendering so ten-thousand-row sheets stay
-              scrollable without freezing Chrome.
+              {state.rows.length > 0 ? (
+                <>
+                  Inline validation badges per row. Select a row for accessible details. Virtualized table keeps large
+                  files responsive.
+                </>
+              ) : (
+                <>Upload a file to populate the preview. Row-level issues and staging readiness appear after validation.</>
+              )}
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-4">
-            <ImportPreviewTable rows={state.rows} className="min-h-0 flex-1" />
+          <CardContent
+            className={cn(
+              'flex flex-col gap-4 pt-4 lg:flex-row',
+              previewCardExpanded ? 'min-h-0 flex-1 lg:items-stretch' : 'lg:items-start',
+            )}
+          >
+            {state.phase === 'schema_blocked' && state.schemaFailure ? (
+              <ImportSchemaBlockedPanel failure={state.schemaFailure} className="w-full lg:flex-1" />
+            ) : (
+              <>
+                <ImportPreviewTable
+                  rows={state.rows}
+                  selectedSourceIndex={selectedSourceIndex}
+                  onSelectSourceIndex={setSelectedSourceIndex}
+                  className={cn('min-w-0', state.rows.length > 0 ? 'min-h-0 flex-1' : 'flex-none shrink-0')}
+                />
+                <ImportRowInspector row={selectedRow} className="shrink-0 lg:max-w-sm" />
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -6,18 +6,13 @@ import { getDefaultTimeZone } from '../lib/dates';
 import { normalizeRawRecord } from '../lib/normalizeRecord';
 import { parseCsvToRecords } from '../parsers/parseCsv';
 import { parseXlsxToRecords } from '../parsers/parseXlsx';
-import { forEachYieldChunk } from '../lib/chunkedForEach';
-import { summarizeRows, validateNormalizedRow } from '../validation/validateRows';
+import { buildImportValidationSummary } from '../validation/buildValidationSummary';
+import { runImportValidationPipeline } from '../validation/importValidationPipeline';
+import { validateCampaignImportHeaders } from '../validation/validateImportSchema';
 
-import type {
-  ImportParseSummary,
-  ImportWorkflowPhase,
-  ImportWorkflowState,
-  NormalizedImportRow,
-} from '../types';
+import type { ImportParseSummary, ImportWorkflowState, NormalizedImportRow } from '../types';
 
 const MAX_ROWS = 100_000;
-const VALIDATION_CHUNK = 250;
 const PROGRESS_DEBOUNCE_MS = 120;
 
 function inferKind(file: File): 'csv' | 'xlsx' {
@@ -39,6 +34,7 @@ export function useBatchImportWorkflow() {
     rows: [],
     summary: null,
     fatalMessage: null,
+    schemaFailure: null,
   });
 
   const abortRef = useRef<AbortController | null>(null);
@@ -62,6 +58,7 @@ export function useBatchImportWorkflow() {
       progress: 0,
       displayProgress: 0,
       fatalMessage: null,
+      schemaFailure: null,
     }));
   }, []);
 
@@ -77,6 +74,7 @@ export function useBatchImportWorkflow() {
       rows: [],
       summary: null,
       fatalMessage: null,
+      schemaFailure: null,
     });
   }, []);
 
@@ -96,19 +94,20 @@ export function useBatchImportWorkflow() {
         rows: [],
         summary: null,
         fatalMessage: null,
+        schemaFailure: null,
       });
       setDisplayDebounced(2);
 
       try {
         if (file.size > 40 * 1024 * 1024) {
-          throw new Error('File exceeds the 40 MB safety limit. Split into smaller uploads.');
+          throw new Error('File exceeds the 40 MB safety limit. Split into smaller uploads.');
         }
 
         setState((s) => ({ ...s, phase: 'parsing', progress: 0.08 }));
         setDisplayDebounced(8);
 
         const onProgress = (frac: number) => {
-          const p = 0.08 + frac * 0.42;
+          const p = 0.08 + frac * 0.38;
           setState((s) => ({ ...s, progress: p }));
           setDisplayDebounced(Math.round(p * 100));
         };
@@ -124,43 +123,66 @@ export function useBatchImportWorkflow() {
           );
         }
 
-        setState((s) => ({ ...s, phase: 'normalizing', progress: 0.55 }));
-        setDisplayDebounced(55);
+        const headersForSchema =
+          parsed.rawHeaders.length > 0
+            ? parsed.rawHeaders
+            : Object.keys(parsed.rows[0] ?? {}).map((k) => k.trim()).filter((k) => k.length > 0);
+
+        const schemaCheck = validateCampaignImportHeaders(headersForSchema);
+        if (!schemaCheck.ok) {
+          setState((s) => ({
+            ...s,
+            phase: 'schema_blocked',
+            progress: 1,
+            displayProgress: 100,
+            rows: [],
+            summary: null,
+            fatalMessage: null,
+            schemaFailure: {
+              missingRequired: schemaCheck.missingRequired,
+              detectedRawHeaders: schemaCheck.detectedRawHeaders,
+            },
+          }));
+          setDisplayDebounced(100);
+          return;
+        }
+
+        setState((s) => ({ ...s, phase: 'normalizing', progress: 0.48 }));
+        setDisplayDebounced(48);
 
         const normalized: NormalizedImportRow[] = parsed.rows.map((r, i) =>
           normalizeRawRecord(r as Record<string, unknown>, i + 2, tz),
         );
 
-        setState((s) => ({ ...s, phase: 'validating', progress: 0.62 }));
-        setDisplayDebounced(62);
+        setState((s) => ({ ...s, phase: 'validating', progress: 0.58 }));
+        setDisplayDebounced(58);
 
-        await forEachYieldChunk(
-          normalized,
-          VALIDATION_CHUNK,
-          async (chunk) => {
-            if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-            for (const row of chunk) {
-              validateNormalizedRow(row);
-            }
-          },
-          ac.signal,
-        );
+        if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            runImportValidationPipeline(normalized, { timezone: tz });
+            resolve();
+          });
+        });
+
+        const validation = buildImportValidationSummary(normalized);
 
         setState((s) => ({
           ...s,
-          progress: 0.98,
+          progress: 0.96,
           rows: normalized,
         }));
-        setDisplayDebounced(98);
+        setDisplayDebounced(96);
 
-        const meta = summarizeRows(normalized);
         const summary: ImportParseSummary = {
           fileName: file.name,
           fileType: kind,
-          totalRows: meta.totalRows,
-          validRows: meta.validRows,
-          rowsWithErrors: meta.rowsWithErrors,
-          rowsWithWarnings: meta.rowsWithWarnings,
+          totalRows: validation.totalRows,
+          validRows: validation.validRows,
+          rowsWithErrors: validation.invalidRows,
+          rowsWithWarnings: validation.warningRows + validation.duplicateRows,
+          validation,
           parseFatalError: null,
           durationMs: Math.round(performance.now() - t0),
         };
@@ -172,6 +194,7 @@ export function useBatchImportWorkflow() {
           displayProgress: 100,
           summary,
           fatalMessage: null,
+          schemaFailure: null,
         }));
       } catch (e) {
         const msg =
@@ -188,6 +211,7 @@ export function useBatchImportWorkflow() {
           rows: [],
           summary: null,
           fatalMessage: msg,
+          schemaFailure: null,
         }));
       } finally {
         abortRef.current = null;

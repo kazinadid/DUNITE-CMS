@@ -1,3 +1,7 @@
+import type { ParsedSheetRecords } from './parsedSheetRecords';
+
+export type { ParsedSheetRecords };
+
 export interface XlsxParseOptions {
   onProgress?: (fraction: number) => void;
   signal?: AbortSignal;
@@ -7,10 +11,11 @@ export interface XlsxParseOptions {
  * Reads the first worksheet and converts rows to plain objects using the header row.
  * SheetJS is loaded dynamically so CSV-only sessions stay lighter.
  */
+
 export async function parseXlsxToRecords(
   file: File,
   opts: XlsxParseOptions = {},
-): Promise<{ rows: Record<string, string>[] }> {
+): Promise<ParsedSheetRecords> {
   const { onProgress, signal } = opts;
 
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -33,10 +38,20 @@ export async function parseXlsxToRecords(
 
   const sheetName = wb.SheetNames[0];
   if (!sheetName) {
-    return { rows: [] };
+    return { rows: [], rawHeaders: [] };
   }
 
   const ws = wb.Sheets[sheetName];
+  const asRows = XLSX.utils.sheet_to_json<string[]>(ws, {
+    header: 1,
+    defval: '',
+    raw: false,
+  }) as unknown[][];
+  const headerRowArr = Array.isArray(asRows[0]) ? (asRows[0] as unknown[]) : [];
+  const rawHeaders = headerRowArr
+    .map((cell) => (cell === null || cell === undefined ? '' : String(cell).trim()))
+    .filter((s) => s !== '');
+
   const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
     defval: '',
     raw: false,
@@ -61,5 +76,5 @@ export async function parseXlsxToRecords(
   }
 
   onProgress?.(0.5);
-  return { rows };
+  return { rows, rawHeaders };
 }

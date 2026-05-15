@@ -1,5 +1,9 @@
 import Papa from 'papaparse';
 
+import type { ParsedSheetRecords } from './parsedSheetRecords';
+
+export type { ParsedSheetRecords };
+
 export interface CsvParseOptions {
   onProgress?: (fraction: number) => void;
   signal?: AbortSignal;
@@ -11,11 +15,12 @@ export interface CsvParseOptions {
 export async function parseCsvToRecords(
   file: File,
   opts: CsvParseOptions = {},
-): Promise<{ rows: Record<string, string>[] }> {
+): Promise<ParsedSheetRecords> {
   const { onProgress, signal } = opts;
 
   return new Promise((resolve, reject) => {
     const rows: Record<string, string>[] = [];
+    let rawHeaders: string[] = [];
     let aborted = false;
 
     const checkAbort = () => {
@@ -46,13 +51,22 @@ export async function parseCsvToRecords(
           onProgress(Math.min(0.45, rows.length / 20000));
         }
       },
-      complete: () => {
+      complete: (results) => {
         if (aborted || checkAbort()) {
           reject(new DOMException('Aborted', 'AbortError'));
           return;
         }
+        const fields = results.meta.fields;
+        rawHeaders =
+          fields?.map((h) => String(h ?? '').trim()).filter((s) => s.length > 0) ?? [];
+
+        /* No Papa meta.fields (edge-case empty file): infer from first object row keys */
+        if (rawHeaders.length === 0 && rows.length > 0) {
+          rawHeaders = Object.keys(rows[0]!).map((k) => String(k ?? '').trim());
+        }
+
         onProgress?.(0.5);
-        resolve({ rows });
+        resolve({ rows, rawHeaders });
       },
       error: (err) => reject(err),
     });

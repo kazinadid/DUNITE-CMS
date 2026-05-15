@@ -3,7 +3,7 @@
 import { useCallback, useId, useRef, useState } from 'react';
 import { FileUp } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 export interface ImportDropzoneProps {
@@ -21,77 +21,164 @@ export function ImportDropzone({
   onFile,
   className,
 }: ImportDropzoneProps) {
-  const id = useId();
+  const inputId = useId();
+  const instructionsId = useId();
+  const hintId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [drag, setDrag] = useState(false);
+  const dragDepthRef = useRef(0);
+  const [dragActive, setDragActive] = useState(false);
+
+  const blocked = Boolean(disabled || busy);
 
   const handleFiles = useCallback(
     (list: FileList | null) => {
-      if (!list?.length || disabled || busy) return;
+      if (!list?.length || blocked) return;
       onFile(list[0]);
     },
-    [busy, disabled, onFile],
+    [blocked, onFile],
+  );
+
+  const openFilePicker = useCallback(() => {
+    if (blocked) return;
+    inputRef.current?.click();
+  }, [blocked]);
+
+  const bumpDragDepth = useCallback((delta: number) => {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current + delta);
+    setDragActive(dragDepthRef.current > 0);
+  }, []);
+
+  const onDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (blocked) return;
+      bumpDragDepth(1);
+    },
+    [blocked, bumpDragDepth],
+  );
+
+  const onDragLeave = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (blocked) return;
+      bumpDragDepth(-1);
+    },
+    [blocked, bumpDragDepth],
+  );
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragDepthRef.current = 0;
+      setDragActive(false);
+      handleFiles(e.dataTransfer.files);
+    },
+    [handleFiles],
+  );
+
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (blocked) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openFilePicker();
+      }
+    },
+    [blocked, openFilePicker],
   );
 
   return (
-    <div
-      className={cn(
-        'relative rounded-2xl border border-dashed border-foreground/20 bg-muted/20 p-6 transition-colors',
-        drag && 'border-primary bg-primary/5',
-        (disabled || busy) && 'pointer-events-none opacity-60',
-        className,
-      )}
-      onDragEnter={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDrag(true);
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDrag(false);
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDrag(false);
-        handleFiles(e.dataTransfer.files);
-      }}
-    >
+    <div className={cn('relative', className)}>
       <input
-        id={id}
+        id={inputId}
         ref={inputRef}
         type="file"
         accept={accept}
+        tabIndex={-1}
         className="sr-only"
-        disabled={disabled || busy}
-        onChange={(e) => handleFiles(e.target.files)}
+        disabled={blocked}
+        onChange={(e) => {
+          handleFiles(e.target.files);
+          e.target.value = '';
+        }}
       />
 
-      <div className="flex flex-col items-center justify-center gap-3 text-center">
-        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-background ring-1 ring-foreground/10">
-          <FileUp className="size-6 text-muted-foreground" aria-hidden />
-        </span>
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-foreground">
-            Drag & drop a CSV or Excel file
+      <div
+        role="button"
+        tabIndex={blocked ? -1 : 0}
+        aria-disabled={blocked}
+        aria-busy={busy || undefined}
+        aria-controls={inputId}
+        aria-labelledby={instructionsId}
+        aria-describedby={hintId}
+        onClick={openFilePicker}
+        onKeyDown={onKeyDown}
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        className={cn(
+          'group/dz relative flex min-h-[200px] cursor-pointer flex-col items-center justify-center gap-5 rounded-2xl border border-dashed border-foreground/20 bg-muted/15 px-6 py-8 text-center outline-none transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out',
+          'hover:border-primary/45 hover:bg-muted/35 hover:shadow-sm',
+          'focus-visible:border-primary focus-visible:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          dragActive && 'scale-[1.01] border-primary border-solid bg-primary/[0.07] shadow-md ring-1 ring-primary/25',
+          blocked && 'pointer-events-none cursor-not-allowed opacity-60',
+        )}
+      >
+        <div
+          className={cn(
+            'flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-background shadow-sm ring-1 ring-foreground/10 transition-[transform,box-shadow,color,background-color] duration-200',
+            'group-hover/dz:scale-105 group-hover/dz:bg-primary/[0.06] group-hover/dz:ring-primary/25',
+            'group-focus-visible/dz:ring-2 group-focus-visible/dz:ring-ring/60',
+            dragActive && 'scale-105 bg-primary/10 ring-primary/35',
+          )}
+          aria-hidden
+        >
+          <FileUp
+            className={cn(
+              'size-7 text-muted-foreground transition-colors duration-200',
+              'group-hover/dz:text-primary',
+              dragActive && 'text-primary',
+            )}
+            aria-hidden
+          />
+        </div>
+
+        <div className="max-w-md space-y-2">
+          <p id={instructionsId} className="text-base font-semibold tracking-tight text-foreground">
+            Drop your spreadsheet here
           </p>
-          <p className="text-xs text-muted-foreground">
-            UTF-8 CSV · XLSX first sheet · column headers in row 1
+          <p id={hintId} className="text-sm leading-relaxed text-muted-foreground">
+            CSV or Excel · UTF-8 · headers in row 1 · or press{' '}
+            <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-foreground">
+              Enter
+            </kbd>{' '}
+            /{' '}
+            <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-foreground">
+              Space
+            </kbd>{' '}
+            to browse
           </p>
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => inputRef.current?.click()}
+
+        <span
+          className={cn(
+            buttonVariants({ variant: 'default', size: 'lg' }),
+            'pointer-events-none min-w-[9.5rem] px-5 py-2.5 text-sm font-semibold shadow-sm',
+            'group-hover/dz:bg-primary/92',
+            'group-active/dz:translate-y-px',
+          )}
         >
           Browse files
-        </Button>
+        </span>
       </div>
     </div>
   );
