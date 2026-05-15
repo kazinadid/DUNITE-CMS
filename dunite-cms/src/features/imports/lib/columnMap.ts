@@ -37,6 +37,7 @@ export function extractMappedFields(raw: Record<string, unknown>): {
   postText: string;
   platformRaw: string;
   dateRaw: string;
+  dateValue: unknown;
   mediaRaw: string;
   tagsRaw: string;
 } {
@@ -53,6 +54,7 @@ export function extractMappedFields(raw: Record<string, unknown>): {
     postText: asStr(pt.value),
     platformRaw: asStr(pl.value),
     dateRaw: stringifySpreadsheetCell(dt.value),
+    dateValue: dt.value,
     mediaRaw: asStr(md.value),
     tagsRaw: asStr(tg.value),
   };

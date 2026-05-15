@@ -74,7 +74,9 @@ export function ImportHistoryDashboard({ role, className }: ImportHistoryDashboa
   const filtered = useMemo(() => {
     if (tab === 'all') return jobs;
     if (tab === 'active') {
-      return jobs.filter((j) => ['staging', 'staged', 'queued', 'processing', 'validating'].includes(j.status));
+      return jobs.filter((j) =>
+        ['staging', 'staged', 'queued', 'processing', 'retrying', 'validating'].includes(j.status),
+      );
     }
     if (tab === 'done') {
       return jobs.filter((j) => ['completed', 'partial_success', 'failed', 'cancelled'].includes(j.status));

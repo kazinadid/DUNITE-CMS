@@ -46,6 +46,7 @@ const RE_OA_SERIAL = /^\d{4,6}(\.\d{1,12})?$/;
 export type PublishDateReasonCode =
   | 'empty'
   | 'unsupported_publish_date_format'
+  | 'unsupported_publish_date_type'
   | 'numeric_timestamp_invalid'
   | 'excel_serial_out_of_range'
   | 'excel_serial_invalid'
@@ -56,6 +57,7 @@ export type PublishDateReasonCode =
 export const PUBLISH_DATE_REASON_MESSAGES: Record<PublishDateReasonCode, string> = {
   empty: 'No publish date was provided.',
   unsupported_publish_date_format: 'Unsupported publish date format.',
+  unsupported_publish_date_type: 'Unsupported publish date type.',
   numeric_timestamp_invalid: 'Numeric timestamp could not be read as a valid instant.',
   excel_serial_out_of_range: 'Spreadsheet serial date is outside the supported range.',
   excel_serial_invalid: 'Spreadsheet serial date could not be converted.',
@@ -79,6 +81,80 @@ export interface ParsePublishDateResult {
   normalizedIso?: string | null;
 }
 
+function parsePublishDateNumber(raw: number): ParsePublishDateResult {
+  if (!Number.isFinite(raw)) {
+    return {
+      date: null,
+      reasonCode: 'numeric_timestamp_invalid',
+      normalizedIso: null,
+    };
+  }
+
+  // Excel / OA serial range first (common for XLSX date cells in raw mode).
+  if (raw >= 30000 && raw <= 800_000) {
+    const oa = oaSerialToUtcDate(raw);
+    if (!oa) {
+      return {
+        date: null,
+        reasonCode: 'excel_serial_invalid',
+        normalizedIso: null,
+      };
+    }
+    return {
+      date: oa,
+      normalizedIso: oa.toISOString(),
+      warning: 'excel_oa_serial',
+    };
+  }
+
+  // Unix timestamp path: 10-digit seconds or 13-digit milliseconds.
+  const rounded = Math.trunc(Math.abs(raw));
+  const digitCount = String(rounded).length;
+  if (digitCount === 10 || digitCount === 13) {
+    return tryParseUnixString(String(Math.trunc(raw)));
+  }
+
+  return {
+    date: null,
+    reasonCode: 'excel_serial_out_of_range',
+    normalizedIso: null,
+  };
+}
+
+export function parsePublishDateUnknown(raw: unknown, fallbackTz: string): ParsePublishDateResult {
+  if (raw == null) {
+    return { date: null, reasonCode: 'empty', normalizedIso: null };
+  }
+
+  if (raw instanceof Date) {
+    if (!Number.isFinite(raw.getTime())) {
+      return {
+        date: null,
+        reasonCode: 'unsupported_publish_date_format',
+        normalizedIso: null,
+      };
+    }
+    return {
+      date: raw,
+      normalizedIso: raw.toISOString(),
+    };
+  }
+
+  if (typeof raw === 'number') {
+    return parsePublishDateNumber(raw);
+  }
+
+  if (typeof raw === 'string') {
+    return parsePublishDate(raw, fallbackTz);
+  }
+
+  return {
+    date: null,
+    reasonCode: 'unsupported_publish_date_type',
+    normalizedIso: null,
+  };
+}
+
 export function isValidUtcInstant(d: unknown): d is Date {
   return d instanceof Date && Number.isFinite(d.getTime());
 }
@@ -88,15 +164,7 @@ export function isValidUtcInstant(d: unknown): d is Date {
  * drops invalid `Date` instances.
  */
 export function coerceUnknownToUtcDate(value: unknown, fallbackTz = 'UTC'): Date | null {
-  if (value == null) return null;
-  if (value instanceof Date) {
-    return Number.isFinite(value.getTime()) ? value : null;
-  }
-  if (typeof value === 'string') {
-    const r = parsePublishDate(value, fallbackTz);
-    return r.date;
-  }
-  return null;
+  return parsePublishDateUnknown(value, fallbackTz).date;
 }
 
 function toUtcDateOrNull(d: Date): Date | null {
@@ -264,29 +332,18 @@ export function sanitizeRowPublishAtField(row: NormalizedImportRow, fallbackTz: 
   const raw = row.publishAtRaw?.trim() ?? '';
   const at = row.publishAt as unknown;
 
-  if (at instanceof Date) {
-    if (!Number.isFinite(at.getTime())) {
-      row.publishAt = null;
-      if (raw) {
-        row.parseHints.dateParseFailed = true;
-        row.parseHints.dateParseDiagnostics = {
-          original: raw,
-          normalizedIso: null,
-          reasonCode: 'unsupported_publish_date_format',
-          reason: PUBLISH_DATE_REASON_MESSAGES.unsupported_publish_date_format,
-        };
-      }
-    }
-    return;
-  }
-
-  if (typeof at === 'string') {
-    const p = parsePublishDate(at, fallbackTz);
-    row.publishAt = p.date;
-    return;
-  }
-
-  if (at != null) {
+  const parsed = parsePublishDateUnknown(at, fallbackTz);
+  row.publishAt = parsed.date;
+  if (at != null && parsed.date == null) {
     row.publishAt = null;
+    if (raw) {
+      row.parseHints.dateParseFailed = true;
+      row.parseHints.dateParseDiagnostics = {
+        original: raw,
+        normalizedIso: null,
+        reasonCode: parsed.reasonCode ?? 'unsupported_publish_date_format',
+        reason: lookupPublishDateReasonMessage(parsed.reasonCode),
+      };
+    }
   }
 }

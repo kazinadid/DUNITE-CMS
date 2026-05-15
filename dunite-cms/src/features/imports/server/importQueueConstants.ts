@@ -1,6 +1,6 @@
 /** Default rows claimed per server action / worker tick (bounded in DB RPC). */
-export const DEFAULT_IMPORT_CHUNK_SIZE = 40;
-export const MAX_IMPORT_CHUNK_SIZE = 200;
+export const DEFAULT_IMPORT_CHUNK_SIZE = 75;
+export const MAX_IMPORT_CHUNK_SIZE = 100;
 
 export function resolveImportChunkSize(requested?: number): number {
   const envRaw = process.env.IMPORT_EXEC_CHUNK_SIZE;

@@ -11,6 +11,8 @@ import {
   cancelImportJobServerAction,
   enqueueImportJobServerAction,
   executeImportJobChunkServerAction,
+  getImportJobChunkHistoryServerAction,
+  getImportJobErrorReportServerAction,
   getImportFailureDiagnosticsServerAction,
   retryFailedImportRowsServerAction,
 } from '@/app/actions/importJobsActions';
@@ -20,7 +22,13 @@ import type { Role } from '@/features/auth';
 import { canRunBatchImport } from '@/lib/rbac';
 
 import { useImportJobProgressPoll } from '../hooks/useImportJobProgressPoll';
-import type { ImportFailureGroup, ImportJobProgressPayload, ImportJobTableRow } from '../types';
+import type {
+  ImportFailureGroup,
+  ImportJobChunkLog,
+  ImportJobProgressPayload,
+  ImportJobTableRow,
+  ImportRowAttemptLog,
+} from '../types';
 
 import { ImportStatusBadge } from './importStatusBadge';
 import { QueueHealthIndicator } from './queueHealthIndicator';
@@ -43,6 +51,10 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
   const [diagOpen, setDiagOpen] = useState(false);
   const [diagGroups, setDiagGroups] = useState<ImportFailureGroup[]>([]);
   const [diagLoading, setDiagLoading] = useState(false);
+  const [chunkOpen, setChunkOpen] = useState(false);
+  const [chunkLoading, setChunkLoading] = useState(false);
+  const [chunks, setChunks] = useState<ImportJobChunkLog[]>([]);
+  const [attempts, setAttempts] = useState<ImportRowAttemptLog[]>([]);
 
   const { progress, refresh } = useImportJobProgressPoll(jobId, true, job.status);
 
@@ -73,6 +85,27 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
       created_at: job.created_at,
       started_at: job.started_at ?? null,
       completed_at: job.completed_at ?? null,
+      rows_per_second:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.rows_per_second === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).rows_per_second as number)
+          : null,
+      eta_seconds: null,
+      worker_id:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.worker_id === 'string'
+          ? ((job.execution_stats as Record<string, unknown>).worker_id as string)
+          : null,
+      last_chunk_duration_ms:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.last_chunk_duration_ms === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).last_chunk_duration_ms as number)
+          : null,
+      last_chunk_rows:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.last_chunk_rows === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).last_chunk_rows as number)
+          : null,
+      chunk_failures:
+        typeof (job.execution_stats as Record<string, unknown> | undefined)?.failed === 'number'
+          ? ((job.execution_stats as Record<string, unknown>).failed as number)
+          : 0,
     };
   }, [progress, job]);
 
@@ -87,9 +120,27 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
     }
   }, [jobId]);
 
+  const loadChunks = useCallback(async () => {
+    setChunkLoading(true);
+    try {
+      const res = await getImportJobChunkHistoryServerAction(jobId, 80, 0);
+      if (!res.ok) {
+        toast.error(res.message ?? 'Chunk history failed');
+        return;
+      }
+      setChunks(res.chunks ?? []);
+      setAttempts(res.attempts ?? []);
+    } finally {
+      setChunkLoading(false);
+    }
+  }, [jobId]);
+
   useEffect(() => {
     if (diagOpen) void loadDiag();
   }, [diagOpen, loadDiag]);
+  useEffect(() => {
+    if (chunkOpen) void loadChunks();
+  }, [chunkOpen, loadChunks]);
 
   const runChunk = async () => {
     const res = await executeImportJobChunkServerAction(jobId);
@@ -187,7 +238,7 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
                   Queue
                 </Button>
               )}
-              {['queued', 'processing'].includes(display.status) && (
+              {['queued', 'processing', 'retrying'].includes(display.status) && (
                 <Button type="button" size="sm" onClick={() => void runChunk()} className="gap-2">
                   <Play className="size-4" />
                   Run chunk
@@ -209,7 +260,9 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
                   Retry failures
                 </Button>
               )}
-              {['uploaded', 'validated', 'staging', 'staged', 'queued', 'processing'].includes(display.status) && (
+              {['uploaded', 'validated', 'staging', 'staged', 'queued', 'processing', 'retrying'].includes(
+                display.status,
+              ) && (
                 <Button
                   type="button"
                   size="sm"
@@ -226,6 +279,34 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
               <Button type="button" size="sm" variant="ghost" className="gap-2" onClick={() => void refresh()}>
                 <RefreshCw className="size-4" />
                 Refresh
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void getImportJobErrorReportServerAction(jobId).then((r) => {
+                    if (!r.ok) {
+                      toast.error(r.message ?? 'Error report failed.');
+                      return;
+                    }
+                    const header = 'row_number,row_id,error_message';
+                    const lines = r.rows.map(
+                      (row) =>
+                        `${row.row_number},${JSON.stringify(row.row_id)},${JSON.stringify(row.error_message)}`,
+                    );
+                    const csv = [header, ...lines].join('\n');
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                    const href = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = href;
+                    a.download = `import-errors-${jobId.slice(0, 8)}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(href);
+                  })
+                }
+              >
+                Download errors CSV
               </Button>
             </div>
           )}
@@ -286,9 +367,76 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
                 <time dateTime={job.completed_at}>{dayjs(job.completed_at).format('MMM D, YYYY HH:mm')}</time>
               </p>
             )}
+            {display.rows_per_second != null && (
+              <p>
+                <span className="text-muted-foreground">Rows/sec</span>{' '}
+                <span className="font-medium tabular-nums">{display.rows_per_second.toFixed(2)}</span>
+              </p>
+            )}
+            {display.eta_seconds != null && (
+              <p>
+                <span className="text-muted-foreground">ETA</span>{' '}
+                <span className="font-medium tabular-nums">{display.eta_seconds}s</span>
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-foreground/10">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="text-base">Chunk execution history</CardTitle>
+            <CardDescription>Worker-level chunk timing, failures, and attempt diagnostics.</CardDescription>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => setChunkOpen((v) => !v)}>
+            {chunkOpen ? 'Hide' : 'Show'} chunks
+          </Button>
+        </CardHeader>
+        {chunkOpen && (
+          <CardContent className="space-y-3">
+            {chunkLoading ? (
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            ) : chunks.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No chunk logs yet for this job.</p>
+            ) : (
+              <ul className="max-h-64 space-y-2 overflow-y-auto text-xs">
+                {chunks.map((chunk) => (
+                  <li key={chunk.id} className="rounded border border-foreground/10 bg-muted/20 px-2 py-2">
+                    <p className="font-medium">
+                      Chunk #{chunk.chunk_index} · {chunk.status} · worker {chunk.worker_id}
+                    </p>
+                    <p className="text-muted-foreground">
+                      rows {chunk.rows_imported}/{chunk.rows_claimed} imported · failed {chunk.rows_failed} · duration{' '}
+                      {chunk.duration_ms ?? 0}ms
+                    </p>
+                    {chunk.error_summary ? <p className="text-destructive/90">{chunk.error_summary}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {attempts.length > 0 ? (
+              <details className="rounded border border-foreground/10 bg-muted/10 px-3 py-2">
+                <summary className="cursor-pointer text-xs font-semibold">Recent row attempts ({attempts.length})</summary>
+                <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-[11px]">
+                  {attempts.slice(0, 80).map((attempt) => (
+                    <li key={attempt.id} className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 break-words">
+                        row {attempt.row_id.slice(0, 8)}… · try {attempt.attempt_no} · {attempt.status}
+                        {attempt.error_message ? ` · ${attempt.error_message}` : ''}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {dayjs(attempt.started_at).format('MMM D HH:mm:ss')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </CardContent>
+        )}
+      </Card>
 
       {job.error_summary && (
         <Card className="border-destructive/30 bg-destructive/5">

@@ -2,7 +2,13 @@ import 'server-only';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-import type { ImportJobSortKey, ImportJobTableRow, ImportOperationsSummary } from '../types';
+import type {
+  ImportJobChunkLog,
+  ImportJobSortKey,
+  ImportJobTableRow,
+  ImportOperationsSummary,
+  ImportRowAttemptLog,
+} from '../types';
 import { getImportActor, getImportListSession } from './importAuth';
 import { retryFailedImportRowsAction } from './importJobLifecycleActions';
 
@@ -109,7 +115,9 @@ export async function listImportJobsPagedAction(
   }
 
   if (params.hideArchived) {
-    q = q.not('metadata', 'cs', { archived: true });
+    // `.not(column, operator, value)` forwards `value` as raw PostgREST text (see postgrest-js `not()`).
+    // Passing a plain object becomes `not.cs.[object Object]` → Postgres "invalid input syntax for type json".
+    q = q.not('metadata', 'cs', JSON.stringify({ archived: true }));
   }
 
   const ascending = params.sortDir === 'asc';
@@ -227,6 +235,7 @@ export async function getImportOperationsSummaryAction(): Promise<
 const OPS_STATUS_BUCKETS = [
   'queued',
   'processing',
+  'retrying',
   'staged',
   'staging',
   'failed',
@@ -279,7 +288,7 @@ export async function bulkCancelImportJobsAction(
     .from('import_jobs')
     .update({ status: 'cancelled' })
     .in('id', ids)
-    .in('status', ['uploaded', 'validated', 'staging', 'staged', 'queued', 'processing'])
+    .in('status', ['uploaded', 'validated', 'staging', 'staged', 'queued', 'processing', 'retrying'])
     .select('id');
 
   if (error) return { ok: false, message: error.message };
@@ -419,6 +428,75 @@ export async function getImportJobDetailAction(jobId: string): Promise<
     failure_sample: (fails ?? []).map((r) => ({
       row_number: r.row_number as number,
       error_message: r.error_message as string | null,
+    })),
+  };
+}
+
+export async function getImportJobChunkHistoryAction(
+  jobId: string,
+  opts?: { limit?: number; offset?: number },
+): Promise<{ ok: true; chunks: ImportJobChunkLog[]; attempts: ImportRowAttemptLog[] } | ListImportJobsPagedError> {
+  const supabase = await createSupabaseServerClient();
+  try {
+    await getImportListSession(supabase);
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Unauthorized.' };
+  }
+  const limit = Math.min(200, Math.max(1, opts?.limit ?? 60));
+  const offset = Math.max(0, opts?.offset ?? 0);
+  const { data: chunks, error: chunkErr } = await supabase.rpc('import_job_chunk_history', {
+    p_job_id: jobId,
+    p_limit: limit,
+    p_offset: offset,
+  });
+  if (chunkErr) return { ok: false, message: chunkErr.message };
+  const typedChunks = (chunks ?? []) as ImportJobChunkLog[];
+
+  const chunkIds = typedChunks.map((c) => c.id);
+  let attempts: ImportRowAttemptLog[] = [];
+  if (chunkIds.length > 0) {
+    const { data: atts, error: attErr } = await supabase
+      .from('import_row_attempts')
+      .select(
+        'id,job_id,row_id,chunk_id,worker_id,attempt_no,status,started_at,completed_at,error_message,error_details',
+      )
+      .eq('job_id', jobId)
+      .in('chunk_id', chunkIds)
+      .order('started_at', { ascending: false })
+      .limit(500);
+    if (attErr) return { ok: false, message: attErr.message };
+    attempts = (atts ?? []) as ImportRowAttemptLog[];
+  }
+
+  return { ok: true, chunks: typedChunks, attempts };
+}
+
+export async function getImportJobErrorReportAction(
+  jobId: string,
+): Promise<{ ok: true; rows: Array<{ row_number: number; error_message: string; row_id: string }> } | ListImportJobsPagedError> {
+  const supabase = await createSupabaseServerClient();
+  try {
+    await getImportListSession(supabase);
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Unauthorized.' };
+  }
+
+  const { data, error } = await supabase
+    .from('import_rows')
+    .select('id,row_number,error_message')
+    .eq('import_job_id', jobId)
+    .eq('processing_state', 'failed')
+    .order('row_number', { ascending: true })
+    .limit(20000);
+
+  if (error) return { ok: false, message: error.message };
+
+  return {
+    ok: true,
+    rows: (data ?? []).map((r) => ({
+      row_number: Number(r.row_number ?? 0),
+      error_message: String(r.error_message ?? 'Unknown failure'),
+      row_id: String(r.id),
     })),
   };
 }

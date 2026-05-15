@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
-import type { ImportFailureGroup, ImportJobListItem } from '../../types';
+import type { ImportFailureGroup, ImportJobChunkLog, ImportJobListItem } from '../../types';
 import { deriveJobDurationMs, formatDurationMs, formatShortDateTime } from '../../lib/importJobTime';
 import { ImportJobStatusBadge } from './ImportJobStatusBadge';
 
@@ -37,6 +37,9 @@ export interface ImportHistoryTableProps {
   failureDiagByJob: Record<string, ImportFailureGroup[]>;
   failureDiagLoading: string | null;
   onEnsureFailureDiag: (jobId: string) => void;
+  chunkHistoryByJob: Record<string, ImportJobChunkLog[]>;
+  chunkHistoryLoading: string | null;
+  onEnsureChunkHistory: (jobId: string) => void;
   canMutate: boolean;
   busyIdle: boolean;
   onSelect: (id: string) => void;
@@ -58,6 +61,9 @@ function RowImpl({
   failureGroups,
   failureLoading,
   onEnsureFailureDiag,
+  chunkHistory,
+  chunkHistoryLoading,
+  onEnsureChunkHistory,
   canMutate,
   busyIdle,
   onSelect,
@@ -74,6 +80,9 @@ function RowImpl({
   failureGroups: ImportFailureGroup[] | undefined;
   failureLoading: boolean;
   onEnsureFailureDiag: (id: string) => void;
+  chunkHistory: ImportJobChunkLog[] | undefined;
+  chunkHistoryLoading: boolean;
+  onEnsureChunkHistory: (id: string) => void;
   canMutate: boolean;
   busyIdle: boolean;
   onSelect: (id: string) => void;
@@ -88,8 +97,11 @@ function RowImpl({
   const openDiag = useCallback(() => {
     const nextOpen = !expanded;
     onToggleExpand(job.id);
-    if (nextOpen) void onEnsureFailureDiag(job.id);
-  }, [job.id, expanded, onEnsureFailureDiag, onToggleExpand]);
+    if (nextOpen) {
+      void onEnsureFailureDiag(job.id);
+      void onEnsureChunkHistory(job.id);
+    }
+  }, [job.id, expanded, onEnsureFailureDiag, onEnsureChunkHistory, onToggleExpand]);
 
   return (
     <>
@@ -220,6 +232,27 @@ function RowImpl({
                   <p className="mt-1 text-muted-foreground">No grouped failures loaded.</p>
                 )}
               </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Chunk timeline</p>
+                {chunkHistoryLoading ? (
+                  <p className="mt-1 text-muted-foreground">Loading chunks…</p>
+                ) : chunkHistory && chunkHistory.length > 0 ? (
+                  <ul className="mt-1 space-y-1">
+                    {chunkHistory.slice(0, 8).map((c) => (
+                      <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <span className="min-w-0 break-words text-foreground">
+                          #{c.chunk_index} · {c.status} · {c.worker_id}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-muted-foreground">
+                          {c.rows_imported}/{c.rows_claimed} · {c.duration_ms ?? 0}ms
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-muted-foreground">No chunk logs yet.</p>
+                )}
+              </div>
             </div>
           </td>
         </tr>
@@ -238,6 +271,9 @@ export function ImportHistoryTable({
   failureDiagByJob,
   failureDiagLoading,
   onEnsureFailureDiag,
+  chunkHistoryByJob,
+  chunkHistoryLoading,
+  onEnsureChunkHistory,
   canMutate,
   busyIdle,
   onSelect,
@@ -296,6 +332,9 @@ export function ImportHistoryTable({
                   failureGroups={failureDiagByJob[job.id]}
                   failureLoading={failureDiagLoading === job.id}
                   onEnsureFailureDiag={onEnsureFailureDiag}
+                  chunkHistory={chunkHistoryByJob[job.id]}
+                  chunkHistoryLoading={chunkHistoryLoading === job.id}
+                  onEnsureChunkHistory={onEnsureChunkHistory}
                   canMutate={canMutate}
                   busyIdle={busyIdle}
                   onSelect={onSelect}

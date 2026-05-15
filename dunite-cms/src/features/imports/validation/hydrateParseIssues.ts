@@ -35,7 +35,13 @@ export function hydrateParseIssues(row: NormalizedImportRow): void {
 
   if (parseHints.dateParseFailed) {
     const diag = parseHints.dateParseDiagnostics;
-    pushIssue(issues, ImportIssueCode.INVALID_DATE, 'error', 'Unsupported publish date format.', {
+    const reason = diag?.reason ?? 'Unsupported publish date format.';
+    pushIssue(
+      issues,
+      ImportIssueCode.INVALID_DATE,
+      'error',
+      `Row ${row.sourceRowIndex}: ${reason}`,
+      {
       raw: row.publishAtRaw,
       ...(diag?.original ? { original: diag.original } : {}),
       ...(diag?.normalizedIso !== undefined && diag?.normalizedIso !== null
@@ -43,6 +49,7 @@ export function hydrateParseIssues(row: NormalizedImportRow): void {
         : {}),
       ...(diag?.reasonCode ? { reason_code: diag.reasonCode } : {}),
       ...(diag?.reason ? { reason: diag.reason } : {}),
-    });
+      },
+    );
   }
 }

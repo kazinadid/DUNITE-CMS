@@ -155,9 +155,7 @@ export function useBatchImportWorkflow() {
         setState((s) => ({ ...s, phase: 'normalizing', progress: 0.48 }));
         setDisplayDebounced(48);
 
-        const normalized: NormalizedImportRow[] = parsed.rows.map((r, i) =>
-          normalizeRawRecord(r as Record<string, unknown>, i + 2, tz),
-        );
+        const normalized: NormalizedImportRow[] = parsed.rows.map((r, i) => normalizeRawRecord(r, i + 2, tz));
 
         setState((s) => ({ ...s, phase: 'validating', progress: 0.58 }));
         setDisplayDebounced(58);

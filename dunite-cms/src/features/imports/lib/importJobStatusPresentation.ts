@@ -27,7 +27,7 @@ export function shouldPollImportJobProgress(status: string | null | undefined): 
   if (!status) return true;
   if (isImportJobTerminalStatus(status)) return false;
   const s = status.toLowerCase();
-  return s === 'queued' || s === 'processing' || s === 'staged';
+  return s === 'queued' || s === 'processing' || s === 'staged' || s === 'retrying';
 }
 
 export type ImportQueueVisualState =

@@ -9,6 +9,7 @@ import {
   enqueueImportJobServerAction,
   executeImportJobChunkServerAction,
   getImportFailureDiagnosticsServerAction,
+  getImportJobChunkHistoryServerAction,
   listRecentImportJobsServerAction,
   requeueStaleImportJobsServerAction,
   retryFailedImportRowsServerAction,
@@ -20,6 +21,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { getDefaultTimeZone } from '../lib/dates';
 import { buildImportPreviewPayload } from '../preview/prepareImportPreview';
 import type { ImportFailureGroup, ImportJobListItem, ImportStagingDiagnostics, NormalizedImportRow } from '../types';
+import type { ImportJobChunkLog } from '../types';
 
 const MAX_AUTO_CHUNKS = 40;
 const PAGE_SIZE = 20;
@@ -53,6 +55,9 @@ export interface UseImportOperationsConsoleResult {
   failureDiagByJob: Record<string, ImportFailureGroup[]>;
   failureDiagLoading: string | null;
   ensureFailureDiag: (jobId: string) => Promise<void>;
+  chunkHistoryByJob: Record<string, ImportJobChunkLog[]>;
+  chunkHistoryLoading: string | null;
+  ensureChunkHistory: (jobId: string) => Promise<void>;
   handleStage: () => Promise<void>;
   handleEnqueue: (jobId: string) => Promise<void>;
   handleQueueAndStart: (jobId: string) => Promise<void>;
@@ -82,6 +87,8 @@ export function useImportOperationsConsole({
   const [expandedJobIds, setExpandedJobIds] = useState<ReadonlySet<string>>(new Set());
   const [failureDiagByJob, setFailureDiagByJob] = useState<Record<string, ImportFailureGroup[]>>({});
   const [failureDiagLoading, setFailureDiagLoading] = useState<string | null>(null);
+  const [chunkHistoryByJob, setChunkHistoryByJob] = useState<Record<string, ImportJobChunkLog[]>>({});
+  const [chunkHistoryLoading, setChunkHistoryLoading] = useState<string | null>(null);
 
   const pollRefreshRef = useRef<() => void>(() => {});
 
@@ -177,6 +184,21 @@ export function useImportOperationsConsole({
       }
     },
     [failureDiagByJob],
+  );
+
+  const ensureChunkHistory = useCallback(
+    async (jobId: string) => {
+      if (chunkHistoryByJob[jobId]) return;
+      setChunkHistoryLoading(jobId);
+      try {
+        const res = await getImportJobChunkHistoryServerAction(jobId, 40, 0);
+        if (res.ok) setChunkHistoryByJob((p) => ({ ...p, [jobId]: res.chunks ?? [] }));
+        else toast.error(res.message ?? 'Chunk history failed');
+      } finally {
+        setChunkHistoryLoading(null);
+      }
+    },
+    [chunkHistoryByJob],
   );
 
   const handleStage = useCallback(async () => {
@@ -350,6 +372,9 @@ export function useImportOperationsConsole({
     failureDiagByJob,
     failureDiagLoading,
     ensureFailureDiag,
+    chunkHistoryByJob,
+    chunkHistoryLoading,
+    ensureChunkHistory,
     handleStage,
     handleEnqueue,
     handleQueueAndStart,

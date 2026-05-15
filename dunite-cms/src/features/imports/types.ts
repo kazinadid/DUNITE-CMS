@@ -126,7 +126,46 @@ export interface ImportExecutionStats {
   enqueued_at?: string;
   retry_rows_at?: string;
   retry_rows_count?: number;
+  worker_id?: string;
+  last_chunk_duration_ms?: number;
+  rows_per_second?: number;
+  queue_latency_ms?: number;
   [key: string]: unknown;
+}
+
+export interface ImportJobChunkLog {
+  id: string;
+  job_id: string;
+  chunk_index: number;
+  worker_id: string;
+  queue_name: string;
+  status: 'claimed' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'retrying';
+  claimed_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  rows_claimed: number;
+  rows_imported: number;
+  rows_failed: number;
+  retry_count: number;
+  duration_ms: number | null;
+  error_summary: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImportRowAttemptLog {
+  id: string;
+  job_id: string;
+  row_id: string;
+  chunk_id: string | null;
+  worker_id: string;
+  attempt_no: number;
+  status: 'processing' | 'imported' | 'failed' | 'skipped' | 'cancelled';
+  started_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+  error_details?: Record<string, unknown> | null;
 }
 
 /** Polling payload for active import execution UI. */
@@ -152,6 +191,12 @@ export interface ImportJobProgressPayload {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  rows_per_second: number | null;
+  eta_seconds: number | null;
+  worker_id: string | null;
+  last_chunk_duration_ms: number | null;
+  last_chunk_rows: number | null;
+  chunk_failures: number;
 }
 
 export interface ImportFailureGroup {

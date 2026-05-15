@@ -16,7 +16,9 @@ import {
   bulkArchiveImportJobsAction,
   bulkCancelImportJobsAction,
   bulkRetryImportJobsAction,
+  getImportJobChunkHistoryAction,
   getImportJobDetailAction,
+  getImportJobErrorReportAction,
   getImportJobStatusCountsAction,
   getImportOperationsSummaryAction,
   listImportJobsPagedAction,
@@ -136,4 +138,12 @@ export async function bulkRetryImportJobsServerAction(jobIds: string[]) {
 
 export async function getImportJobDetailServerAction(jobId: string) {
   return getImportJobDetailAction(jobId);
+}
+
+export async function getImportJobChunkHistoryServerAction(jobId: string, limit?: number, offset?: number) {
+  return getImportJobChunkHistoryAction(jobId, { limit, offset });
+}
+
+export async function getImportJobErrorReportServerAction(jobId: string) {
+  return getImportJobErrorReportAction(jobId);
 }

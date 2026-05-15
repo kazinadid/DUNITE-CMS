@@ -84,8 +84,8 @@ export function ImportOperationsDashboard({ role }: { role: Role }) {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {['queued', 'processing', 'failed', 'completed'].map((st) => (
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {['queued', 'processing', 'retrying', 'failed', 'completed'].map((st) => (
           <Card key={st} className="border-foreground/10">
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between gap-2">

@@ -86,7 +86,9 @@ export function ImportLiveQueuePanel({
     ? (progress.pending_importable ?? 0) + (progress.importing_rows ?? 0)
     : null;
   const etaSec =
-    pendingApprox != null && progress
+    progress?.eta_seconds != null
+      ? progress.eta_seconds
+      : pendingApprox != null && progress
       ? estimateRemainingSeconds({
           pendingRows: pendingApprox,
           rowsPerSecond: rpsDisplay,
@@ -233,7 +235,11 @@ export function ImportLiveQueuePanel({
                 <div className="flex justify-between gap-2">
                   <dt className="text-muted-foreground">Throughput</dt>
                   <dd className="font-medium tabular-nums">
-                    {rpsDisplay != null ? `${rpsDisplay.toFixed(1)} rows/s` : 'Estimating…'}
+                    {progress?.rows_per_second != null
+                      ? `${progress.rows_per_second.toFixed(1)} rows/s`
+                      : rpsDisplay != null
+                        ? `${rpsDisplay.toFixed(1)} rows/s`
+                        : 'Estimating…'}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2">
@@ -245,6 +251,10 @@ export function ImportLiveQueuePanel({
                 <div className="flex justify-between gap-2">
                   <dt className="text-muted-foreground">Duration</dt>
                   <dd className="font-medium tabular-nums">{formatDurationMs(durationMs ?? null)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">Worker</dt>
+                  <dd className="font-medium tabular-nums">{progress?.worker_id ?? '—'}</dd>
                 </div>
               </dl>
             </div>

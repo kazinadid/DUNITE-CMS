@@ -141,6 +141,9 @@ export function ImportOperationsConsole({
               failureDiagByJob={ops.failureDiagByJob}
               failureDiagLoading={ops.failureDiagLoading}
               onEnsureFailureDiag={(id) => void ops.ensureFailureDiag(id)}
+              chunkHistoryByJob={ops.chunkHistoryByJob}
+              chunkHistoryLoading={ops.chunkHistoryLoading}
+              onEnsureChunkHistory={(id) => void ops.ensureChunkHistory(id)}
               canMutate={canMutate}
               busyIdle={busyIdle}
               onSelect={ops.setActiveJobId}

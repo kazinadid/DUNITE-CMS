@@ -54,6 +54,23 @@ export async function getImportJobProgressAction(
   }
 
   const stats = (job.execution_stats ?? {}) as ImportExecutionStats;
+  const rowsPerSecond =
+    typeof stats.rows_per_second === 'number' && Number.isFinite(stats.rows_per_second)
+      ? stats.rows_per_second
+      : null;
+  const etaSeconds =
+    rowsPerSecond != null && rowsPerSecond > 0
+      ? Math.max(0, Math.round(((pendingImportable ?? 0) + (importingCount ?? 0)) / rowsPerSecond))
+      : null;
+  const workerId = typeof stats.worker_id === 'string' ? stats.worker_id : null;
+  const lastChunkDurationMs =
+    typeof stats.last_chunk_duration_ms === 'number' && Number.isFinite(stats.last_chunk_duration_ms)
+      ? stats.last_chunk_duration_ms
+      : null;
+  const lastChunkRows =
+    typeof stats.last_chunk_rows === 'number' && Number.isFinite(stats.last_chunk_rows) ? stats.last_chunk_rows : null;
+  const chunkFailures =
+    typeof stats.failed === 'number' && Number.isFinite(stats.failed) ? Math.max(0, Math.floor(stats.failed)) : 0;
 
   const progress: ImportJobProgressPayload = {
     id: job.id as string,
@@ -77,6 +94,12 @@ export async function getImportJobProgressAction(
     created_at: job.created_at as string,
     started_at: (job.started_at as string | null) ?? null,
     completed_at: (job.completed_at as string | null) ?? null,
+    rows_per_second: rowsPerSecond,
+    eta_seconds: etaSeconds,
+    worker_id: workerId,
+    last_chunk_duration_ms: lastChunkDurationMs,
+    last_chunk_rows: lastChunkRows,
+    chunk_failures: chunkFailures,
   };
 
   return { ok: true, progress };

@@ -16,7 +16,7 @@ export async function cancelImportJobAction(jobId: string): Promise<{ ok: boolea
     .from('import_jobs')
     .update({ status: 'cancelled' })
     .eq('id', jobId)
-    .in('status', ['uploaded', 'validated', 'staging', 'staged', 'queued', 'processing']);
+    .in('status', ['uploaded', 'validated', 'staging', 'staged', 'queued', 'processing', 'retrying']);
   if (error) return { ok: false, message: error.message };
   return { ok: true };
 }

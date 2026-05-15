@@ -1,5 +1,5 @@
 import { extractMappedFields } from './columnMap';
-import { getDefaultTimeZone, lookupPublishDateReasonMessage, parsePublishDate } from './dates';
+import { getDefaultTimeZone, lookupPublishDateReasonMessage, parsePublishDateUnknown } from './dates';
 import { parseHashtags, parseMediaUrls, parsePlatforms } from './splitFields';
 
 import type { NormalizedImportRow } from '../types';
@@ -18,7 +18,7 @@ export function normalizeRawRecord(
   const mediaUrls = parseMediaUrls(f.mediaRaw);
   const hashtags = parseHashtags(f.tagsRaw);
   const trimmedDate = f.dateRaw.trim();
-  const parsed = parsePublishDate(f.dateRaw, tz);
+  const parsed = parsePublishDateUnknown(f.dateValue ?? f.dateRaw, tz);
   const { date, warning, reasonCode, normalizedIso } = parsed;
 
   const diagnostics =
