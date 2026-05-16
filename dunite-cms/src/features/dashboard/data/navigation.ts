@@ -5,6 +5,7 @@ import {
   History,
   Image as ImageIcon,
   LayoutDashboard,
+  Link as LinkIcon,
   Settings,
   FileText,
   Users,
@@ -36,12 +37,18 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Import',
     href: '/dashboard/imports',
     icon: Upload,
-    roles: ['admin', 'editor'],
+    roles: ['admin', 'editor'] as Role[],
   },
   { label: 'Calendar',  href: '/dashboard/calendar', icon: Calendar },
   { label: 'Media',     href: '/dashboard/media',    icon: ImageIcon },
-  { label: 'Users',     href: '/dashboard/users',    icon: Users,    roles: ['admin'] },
-  { label: 'Settings',  href: '/dashboard/settings', icon: Settings, roles: ['admin'] },
+  {
+    label: 'Integrations',
+    href:  '/dashboard/integrations',
+    icon:  LinkIcon,
+    roles: ['admin', 'editor'] as Role[],
+  },
+  { label: 'Users',     href: '/dashboard/users',    icon: Users,    roles: ['admin'] as Role[] },
+  { label: 'Settings',  href: '/dashboard/settings', icon: Settings, roles: ['admin'] as Role[] },
 ];
 
 export function visibleNavItems(role: Role | null | undefined): NavItem[] {

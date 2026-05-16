@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
 function requiredSupabaseEnv() {
@@ -78,4 +79,27 @@ export async function createAuthenticatedSupabaseServerClient() {
     session,
     user,
   };
+}
+
+/**
+ * Supabase client using the service-role key.
+ * Use ONLY in trusted server contexts: API routes, background jobs, cron handlers.
+ * Never expose this client to client components or return its data directly to users.
+ */
+export function createSupabaseServiceRoleClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    throw new Error(
+      '[supabase] NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set.'
+    );
+  }
+
+  return createClient(url, serviceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession:   false,
+    },
+  });
 }
