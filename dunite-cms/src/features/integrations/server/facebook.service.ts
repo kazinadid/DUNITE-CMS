@@ -213,6 +213,70 @@ export async function facebookGraphPostForm<T extends Record<string, unknown>>(
   return body as T;
 }
 
+/**
+ * GET `{graph_version}{path}?access_token=…` — insights, object summary fields, paging.
+ */
+export async function facebookGraphGet<T>(
+  relativePath: string,
+  accessToken: string,
+  label: string,
+  attempt = 0,
+): Promise<T> {
+  const base = facebookRestBase();
+  const rawPath = relativePath.startsWith('/') ? relativePath : `/${relativePath}`;
+  const url = new URL(`${base}${rawPath}`);
+  url.searchParams.set('access_token', accessToken);
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'User-Agent': 'DUNITE-CMS/1.0' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(graphTimeoutMs()),
+    });
+  } catch (err) {
+    if (attempt < MAX_RETRIES) {
+      await sleep(400 * (attempt + 1));
+      return facebookGraphGet<T>(relativePath, accessToken, label, attempt + 1);
+    }
+    throw new FacebookServiceError(
+      'facebook_network_error',
+      `Facebook ${label} GET failure: ${(err as Error).message}`,
+      { retryable: true },
+    );
+  }
+
+  const body = (await response.json().catch(() => ({}))) as FacebookGraphErrorShape & T;
+  const graphError = (body as FacebookGraphErrorShape).error;
+  if (!response.ok || graphError) {
+    const graphCode = graphError?.code ?? response.status;
+    const retryable =
+      response.status === 429 ||
+      response.status >= 500 ||
+      graphCode === 4 ||
+      graphCode === 17 ||
+      graphCode === 613;
+
+    if (retryable && attempt < MAX_RETRIES) {
+      await sleep(450 * (attempt + 1));
+      return facebookGraphGet<T>(relativePath, accessToken, label, attempt + 1);
+    }
+
+    throw new FacebookServiceError(
+      retryable ? 'facebook_rate_limited' : 'facebook_graph_error',
+      graphError?.message ?? `Facebook ${label} GET failed with HTTP ${response.status}.`,
+      {
+        graphCode,
+        graphSubcode: graphError?.error_subcode,
+        retryable,
+      },
+    );
+  }
+
+  return body as T;
+}
+
 export async function exchangeFacebookCode(code: string): Promise<FacebookOAuthTokenResponse> {
   const { appId, appSecret, redirectUri } = getFacebookEnv();
   const url = new URL(`${GRAPH_BASE_URL}/oauth/access_token`);

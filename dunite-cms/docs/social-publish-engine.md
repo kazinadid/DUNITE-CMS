@@ -1,7 +1,7 @@
 ## Social Publish Engine — environment
 
 ```
-CRON_SECRET=                          # Bearer for /api/cron/publish-scan and /api/cron/publish-scheduled
+CRON_SECRET=                          # Bearer for /api/cron/publish-scan, /api/cron/publish-scheduled, and /api/cron/sync-facebook-analytics
 
 FACEBOOK_GRAPH_API_VERSION=v19.0       # Overrides Graph REST version (fallback: FACEBOOK_GRAPH_VERSION in code)
 

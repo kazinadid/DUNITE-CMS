@@ -25,6 +25,7 @@ export const POST_LIST_SELECT = `
   id, user_id, organization_id, content, status, scheduled_at, published_at, created_at, updated_at,
   external_post_id, social_account_id, published_by, publish_metadata, last_publish_attempt_at,
   publish_locked_at, publish_locked_by,
+  fb_analytics_last_synced_at, fb_analytics_sync_status,
   last_publish_error, publish_attempt_count, failure_sort_key,
   author:users!posts_user_id_fkey ( id, name, email ),
   post_platforms ( platform ),
@@ -64,6 +65,8 @@ export interface RawPostRow {
   last_publish_attempt_at?: string | null;
   publish_locked_at?: string | null;
   publish_locked_by?: string | null;
+  fb_analytics_last_synced_at?: string | null;
+  fb_analytics_sync_status?: string | null;
   /** Present after migration `0005_posts_publish_audit`; missing on stale caches. */
   last_publish_error?: string | null;
   publish_attempt_count?: number | null;
@@ -205,6 +208,9 @@ export function mapPostRow(row: RawPostRow): Post {
     last_publish_attempt_at: row.last_publish_attempt_at ?? null,
     publish_locked_at:      row.publish_locked_at ?? null,
     publish_locked_by:      row.publish_locked_by ?? null,
+    fb_analytics_last_synced_at: row.fb_analytics_last_synced_at ?? null,
+    fb_analytics_sync_status:
+      (row.fb_analytics_sync_status as Post['fb_analytics_sync_status']) ?? null,
     last_publish_error:     row.last_publish_error ?? null,
     publish_attempt_count:  row.publish_attempt_count ?? 0,
     author:                 row.author,

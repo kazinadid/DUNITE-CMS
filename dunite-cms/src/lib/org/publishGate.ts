@@ -82,3 +82,25 @@ export function canManageSocialAccounts(g: OrgPublishGate): boolean {
     g.isOrgOwner
   );
 }
+
+/** Editors + viewers can view Facebook analytics KPIs scoped to membership. */
+export function canViewFacebookAnalytics(g: OrgPublishGate): boolean {
+  return (
+    g.isSuperAdmin ||
+    g.globalRole === 'admin' ||
+    ['admin', 'editor', 'viewer'].includes(g.orgRole)
+  );
+}
+
+export function canExportFacebookAnalytics(g: OrgPublishGate): boolean {
+  return (
+    g.isSuperAdmin ||
+    g.globalRole === 'admin' ||
+    g.isOrgOwner ||
+    g.orgRole === 'admin'
+  );
+}
+
+export function canManageFacebookAnalyticsSync(g: OrgPublishGate): boolean {
+  return canExportFacebookAnalytics(g);
+}

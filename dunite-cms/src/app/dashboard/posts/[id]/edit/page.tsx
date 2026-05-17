@@ -6,6 +6,7 @@ import { isAdmin } from '@/lib/rbac';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 import { ComposeForm } from '../../compose/ComposeForm';
+import { FacebookPostInsightsSection } from '../../compose/FacebookPostInsightsSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,5 +40,14 @@ export default async function EditPostPage({
 
   const post = mapPostRow(row);
 
-  return <ComposeForm initialPost={post} userRole={auth.role} />;
+  return (
+    <div className="space-y-8 pb-10">
+      <ComposeForm initialPost={post} userRole={auth.role} />
+      {post.external_post_id ? (
+        <div className="px-4 md:px-2">
+          <FacebookPostInsightsSection postId={post.id} />
+        </div>
+      ) : null}
+    </div>
+  );
 }

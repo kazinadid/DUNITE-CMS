@@ -89,6 +89,15 @@ export interface Post {
   last_publish_attempt_at: string | null;
   publish_locked_at: string | null;
   publish_locked_by: string | null;
+  /** Facebook insights sync metadata (UTC timestamps, status surface for UI). */
+  fb_analytics_last_synced_at: string | null;
+  fb_analytics_sync_status:
+    | 'pending'
+    | 'syncing'
+    | 'synced'
+    | 'failed'
+    | 'stale'
+    | null;
   /** Last backend-reported publish failure message, when known. */
   last_publish_error: string | null;
   /** Number of publish attempts recorded by workers (0 if none). */
