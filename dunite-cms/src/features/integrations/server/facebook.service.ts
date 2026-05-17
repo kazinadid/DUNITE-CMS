@@ -2,17 +2,15 @@
 // DUNITE CMS — Facebook OAuth + Graph API service
 // ============================================================================
 // Server-only service. Owns Meta Graph API calls, retries, token exchange,
-// Page fetching, secure token encryption, and persistence.
+// Page fetching, secure token encryption, and OAuth selection payloads.
 // ============================================================================
 
-import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import type { OAuthStateMetadata, PendingFacebookPage } from '../types';
 import { encryptToken } from '../lib/encryption';
 import { computeExpiresAt, computeTokenType } from '../lib/tokenManager';
-import { logOAuthActivity } from './integrationsActivityLogger';
 import {
   FACEBOOK_GRAPH_VERSION,
   FACEBOOK_OAUTH_SCOPES,
-  type ConnectedFacebookPageResult,
   type FacebookGraphErrorShape,
   type FacebookOAuthTokenResponse,
   type FacebookPage,
@@ -146,6 +144,22 @@ export async function exchangeFacebookCode(code: string): Promise<FacebookOAuthT
   return graphFetch<FacebookOAuthTokenResponse>(url.toString(), 'code_exchange');
 }
 
+/**
+ * Exchange short-lived user token for ~60-day long-lived user token.
+ */
+export async function exchangeShortLivedForLongLived(
+  shortLivedToken: string,
+): Promise<FacebookOAuthTokenResponse> {
+  const { appId, appSecret } = getFacebookEnv();
+  const url = new URL(`${GRAPH_BASE_URL}/oauth/access_token`);
+  url.searchParams.set('grant_type', 'fb_exchange_token');
+  url.searchParams.set('client_id', appId);
+  url.searchParams.set('client_secret', appSecret);
+  url.searchParams.set('fb_exchange_token', shortLivedToken);
+
+  return graphFetch<FacebookOAuthTokenResponse>(url.toString(), 'long_lived_exchange');
+}
+
 export async function getFacebookProfile(accessToken: string): Promise<FacebookUserProfile> {
   const url = new URL(`${GRAPH_BASE_URL}/me`);
   url.searchParams.set('fields', 'id,name');
@@ -154,11 +168,13 @@ export async function getFacebookProfile(accessToken: string): Promise<FacebookU
   return graphFetch<FacebookUserProfile>(url.toString(), 'profile');
 }
 
+/** GET /me/accounts — Pages the user can manage with page access tokens */
 export async function getFacebookPages(accessToken: string): Promise<FacebookPage[]> {
   const pages: FacebookPage[] = [];
   let nextUrl: string | null = `${GRAPH_BASE_URL}/me/accounts?${new URLSearchParams({
     access_token: accessToken,
-    fields: 'id,name,category,access_token,tasks,link,picture.type(large),followers_count,fan_count',
+    fields:
+      'id,name,category,access_token,tasks,link,picture.type(large),followers_count,fan_count',
     limit: '100',
   })}`;
 
@@ -176,187 +192,66 @@ export async function getFacebookPages(accessToken: string): Promise<FacebookPag
   return pages;
 }
 
-function getMissingScopesFromPages(pages: FacebookPage[]): string[] {
-  if (pages.length > 0) return [];
-  return ['pages_show_list'];
+function facebookPagesToPending(pages: FacebookPage[]): PendingFacebookPage[] {
+  return pages
+    .filter((p) => Boolean(p.access_token))
+    .map((page) => ({
+      id: page.id,
+      name: page.name,
+      category: page.category ?? '',
+      encrypted_access_token: encryptToken(page.access_token),
+      picture_url: page.picture?.data?.url ?? null,
+      fan_count: page.fan_count ?? null,
+      followers_count: page.followers_count ?? null,
+      page_url: page.link ?? null,
+      tasks: page.tasks ?? [],
+    }));
 }
 
-export async function connectFacebookPage(input: {
-  organizationId: string;
-  connectedBy: string;
+/**
+ * After OAuth callback: exchange code → long-lived user token, fetch `/me/accounts`,
+ * encrypt tokens, return metadata stored on `oauth_states` until the user picks Pages.
+ */
+export async function prepareOAuthSelectionMetadata(code: string): Promise<{
   facebookUserId: string;
-  userAccessToken: string;
-  userTokenExpiresIn?: number;
-  page: FacebookPage;
-}): Promise<ConnectedFacebookPageResult> {
-  const supabase = createSupabaseServiceRoleClient();
-  const encryptedPageToken = encryptToken(input.page.access_token);
-  const encryptedUserToken = encryptToken(input.userAccessToken);
-  const tokenExpiresAt = computeExpiresAt(input.userTokenExpiresIn ?? 0);
-  const tokenType = computeTokenType(input.userTokenExpiresIn ?? 0);
-  const nowIso = new Date().toISOString();
+  metadata: OAuthStateMetadata;
+}> {
+  const short = await exchangeFacebookCode(code);
+  const long = await exchangeShortLivedForLongLived(short.access_token);
+  const profile = await getFacebookProfile(long.access_token);
+  const pages = await getFacebookPages(long.access_token);
 
-  const metadata = {
-    category: input.page.category ?? null,
-    page_url: input.page.link ?? null,
-    picture_url: input.page.picture?.data?.url ?? null,
-    followers_count: input.page.followers_count ?? null,
-    fan_count: input.page.fan_count ?? null,
-    tasks: input.page.tasks ?? [],
-    facebook_user_id: input.facebookUserId,
-    encrypted_user_token: encryptedUserToken,
-  };
-
-  const { data, error } = await supabase
-    .from('social_accounts')
-    .upsert(
-      {
-        organization_id: input.organizationId,
-        connected_by: input.connectedBy,
-
-        // Compatibility schema requested for this phase.
-        provider: 'facebook',
-        page_id: input.page.id,
-        page_name: input.page.name,
-        access_token: encryptedPageToken,
-        refresh_token: null,
-        facebook_user_id: input.facebookUserId,
-        metadata,
-
-        // Existing richer schema.
-        platform: 'facebook',
-        account_type: 'page',
-        external_id: input.page.id,
-        external_name: input.page.name,
-        external_category: input.page.category ?? null,
-        page_url: input.page.link ?? null,
-        profile_image_url: input.page.picture?.data?.url ?? null,
-        status: 'active',
-        health_status: 'healthy',
-        encrypted_page_token: encryptedPageToken,
-        encrypted_user_token: encryptedUserToken,
-        token_expires_at: tokenExpiresAt?.toISOString() ?? null,
-        token_type: tokenType,
-        token_issued_at: nowIso,
-        granted_scopes: [...FACEBOOK_OAUTH_SCOPES],
-        permissions_metadata: { requested_scopes: FACEBOOK_OAUTH_SCOPES },
-        page_metadata: metadata,
-        last_validated_at: nowIso,
-        last_validation_error: null,
-        last_synced_at: nowIso,
-        next_validation_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        disconnected_at: null,
-      },
-      {
-        onConflict: 'organization_id,platform,external_id',
-        ignoreDuplicates: false,
-      },
-    )
-    .select('id, page_id, page_name, external_id, external_name')
-    .single();
-
-  if (error || !data) {
-    throw new FacebookServiceError(
-      'facebook_page_save_failed',
-      `Could not save Facebook Page: ${error?.message ?? 'unknown error'}`,
-    );
-  }
-
-  return {
-    id: data.id as string,
-    pageId: (data.page_id ?? data.external_id) as string,
-    pageName: (data.page_name ?? data.external_name) as string,
-  };
-}
-
-export async function disconnectFacebookPage(input: {
-  accountId: string;
-  organizationId: string;
-}): Promise<void> {
-  const supabase = createSupabaseServiceRoleClient();
-  const { error } = await supabase
-    .from('social_accounts')
-    .update({
-      status: 'disconnected',
-      health_status: 'disconnected',
-      access_token: null,
-      encrypted_page_token: null,
-      encrypted_user_token: null,
-      disconnected_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', input.accountId)
-    .eq('organization_id', input.organizationId);
-
-  if (error) {
-    throw new FacebookServiceError(
-      'facebook_disconnect_failed',
-      `Could not disconnect Facebook Page: ${error.message}`,
-    );
-  }
-}
-
-export async function refreshFacebookToken(): Promise<never> {
-  throw new FacebookServiceError(
-    'facebook_reconnect_required',
-    'Meta does not provide a standard refresh token for Facebook Page access. Reconnect the Page to rotate credentials.',
-  );
-}
-
-export async function connectAllAuthorizedFacebookPages(input: {
-  organizationId: string;
-  connectedBy: string;
-  code: string;
-}): Promise<ConnectedFacebookPageResult[]> {
-  const token = await exchangeFacebookCode(input.code);
-  const profile = await getFacebookProfile(token.access_token);
-  const pages = await getFacebookPages(token.access_token);
-
-  const missingScopes = getMissingScopesFromPages(pages);
-  if (missingScopes.length > 0) {
-    throw new FacebookServiceError(
-      'facebook_missing_permissions',
-      `Facebook did not return any Pages. Missing/declined permission: ${missingScopes.join(', ')}.`,
-    );
-  }
-
-  const connected: ConnectedFacebookPageResult[] = [];
-  for (const page of pages) {
-    if (!page.access_token) {
-      console.warn('[facebook] Skipping page without access token:', page.id);
-      continue;
-    }
-
-    connected.push(
-      await connectFacebookPage({
-        organizationId: input.organizationId,
-        connectedBy: input.connectedBy,
-        facebookUserId: profile.id,
-        userAccessToken: token.access_token,
-        userTokenExpiresIn: token.expires_in,
-        page,
-      }),
-    );
-  }
-
-  if (connected.length === 0) {
+  if (pages.length === 0) {
     throw new FacebookServiceError(
       'facebook_no_pages_found',
-      'No Facebook Pages with access tokens were returned for this account.',
+      'No Facebook Pages were returned for this account. Grant Page permissions or ensure you manage at least one Page.',
     );
   }
 
-  await logOAuthActivity({
-    userId: input.connectedBy,
-    organizationId: input.organizationId,
-    actionType: 'social.facebook.connected',
-    message: `Connected ${connected.length} Facebook Page(s).`,
-    metadata: {
-      provider: 'facebook',
-      facebook_user_id: profile.id,
-      page_count: connected.length,
-    },
-  });
+  const pending = facebookPagesToPending(pages);
+  if (pending.length === 0) {
+    throw new FacebookServiceError(
+      'facebook_no_pages_found',
+      'Facebook returned Pages without usable access tokens.',
+    );
+  }
 
-  return connected;
+  const encryptedUserToken = encryptToken(long.access_token);
+  const expiresAt = computeExpiresAt(long.expires_in ?? 0);
+  const tokenType = computeTokenType(long.expires_in ?? 0);
+
+  return {
+    facebookUserId: profile.id,
+    metadata: {
+      encrypted_user_token: encryptedUserToken,
+      token_expires_at: expiresAt?.toISOString() ?? null,
+      token_type: tokenType,
+      token_issued_at: new Date().toISOString(),
+      facebook_user_id: profile.id,
+      pages: pending,
+    },
+  };
 }
+
+/** Re-export scopes for diagnostics / grants consistency */
+export { FACEBOOK_OAUTH_SCOPES };

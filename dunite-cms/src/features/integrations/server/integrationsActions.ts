@@ -15,12 +15,15 @@ import {
   savePageConnection,
   disconnectAccount,
   getUserDefaultOrganization,
+  listActiveFacebookExternalIds,
+  updateEncryptedUserToken,
+  fetchEncryptedTokens,
 } from './socialAccountsRepository';
 import { loadStateForSelection, completeState } from './oauthAdapter';
 import { logOAuthActivity } from './integrationsActivityLogger';
 import { refreshFacebookToken } from '../lib/tokenManager';
-import { updateEncryptedUserToken, fetchEncryptedTokens } from './socialAccountsRepository';
 import { runFacebookDiagnostics } from './diagnosticsService';
+import { FACEBOOK_OAUTH_SCOPES } from './facebook.types';
 import type {
   SocialAccount,
   SocialPlatform,
@@ -73,15 +76,27 @@ export async function selectFacebookPagesAction(
       return { ok: false, error: 'Insufficient permissions to connect social accounts.' };
     }
 
-    // Load and validate the OAuth state
     const oauthState = await loadStateForSelection(stateId, userId);
     const meta = oauthState.metadata;
 
     if (!meta.pages || meta.pages.length === 0) {
+      await completeState(stateId);
       return { ok: false, error: 'No page data found in this session. Please reconnect.' };
     }
     if (!meta.encrypted_user_token) {
+      await completeState(stateId);
       return { ok: false, error: 'User token not found in session. Please reconnect.' };
+    }
+    if (!meta.facebook_user_id) {
+      await logOAuthActivity({
+        userId,
+        organizationId: orgInfo.id,
+        actionType: 'oauth_failed',
+        message: 'Facebook OAuth metadata missing facebook_user_id.',
+        metadata: { provider: 'facebook', phase: 'page_selection' },
+      });
+      await completeState(stateId);
+      return { ok: false, error: 'Session data was incomplete. Please reconnect Facebook.' };
     }
 
     const selectedPages = meta.pages.filter((p) => selectedPageIds.includes(p.id));
@@ -89,40 +104,46 @@ export async function selectFacebookPagesAction(
       return { ok: false, error: 'None of the selected pages were found in your authorized list.' };
     }
 
-    const grantedScopes = Array.from(new Set(
-      selectedPages.flatMap((p) => p.tasks ?? [])
-    ));
+    const grantedScopes = [...FACEBOOK_OAUTH_SCOPES];
 
-    // Derive user token expiry info from metadata
     const userTokenExpiresIn = meta.token_expires_at
       ? Math.floor((new Date(meta.token_expires_at).getTime() - Date.now()) / 1000)
       : 0;
+
+    const existingExternalIds = new Set(await listActiveFacebookExternalIds(orgInfo.id));
 
     const connected: SocialAccount[] = [];
     const skipped: string[] = [];
 
     for (const page of selectedPages) {
+      if (existingExternalIds.has(page.id)) {
+        skipped.push(page.id);
+        continue;
+      }
+
       try {
         const account = await savePageConnection({
-          organizationId:     orgInfo.id,
-          connectedBy:        userId,
-          platform:           'facebook',
+          organizationId: orgInfo.id,
+          connectedBy: userId,
+          platform: 'facebook',
           page,
           encryptedUserToken: meta.encrypted_user_token,
           userTokenExpiresIn,
-          grantedScopes: ['pages_manage_posts', 'pages_read_engagement', 'pages_show_list'],
+          grantedScopes,
+          facebookUserId: meta.facebook_user_id,
         });
         connected.push(account);
+        existingExternalIds.add(page.id);
 
         await logOAuthActivity({
           userId,
           organizationId: orgInfo.id,
-          actionType:     'social.page_connected',
-          message:        `Facebook Page "${page.name}" connected.`,
-          accountId:      account.id,
+          actionType: 'page_connected',
+          message: `Facebook Page "${page.name}" connected.`,
+          accountId: account.id,
           metadata: {
-            platform:  'facebook',
-            page_id:   page.id,
+            platform: 'facebook',
+            page_id: page.id,
             page_name: page.name,
           },
         });
@@ -132,7 +153,6 @@ export async function selectFacebookPagesAction(
       }
     }
 
-    // Mark OAuth state as completed
     await completeState(stateId);
 
     revalidatePath('/dashboard/integrations');
@@ -164,7 +184,7 @@ export async function disconnectSocialAccountAction(
     await logOAuthActivity({
       userId,
       organizationId: orgInfo.id,
-      actionType:     'social.page_disconnected',
+      actionType: 'page_disconnected',
       message:        `${account.platform} Page "${account.external_name}" disconnected.`,
       accountId,
       metadata: {
@@ -187,7 +207,7 @@ export async function refreshAccountTokenAction(
   accountId: string,
 ): Promise<ActionResult<{ expiresAt: string | null }>> {
   try {
-    const { userId, orgInfo } = await requireUserAndOrg();
+    const { orgInfo } = await requireUserAndOrg();
 
     if (!canManageIntegrations(orgInfo.role)) {
       return { ok: false, error: 'Insufficient permissions.' };
@@ -212,15 +232,6 @@ export async function refreshAccountTokenAction(
       refreshed.expiresAt,
       refreshed.issuedAt,
     );
-
-    await logOAuthActivity({
-      userId,
-      organizationId: orgInfo.id,
-      actionType:     'social.token_refreshed',
-      message:        `Token refreshed for "${account.external_name}".`,
-      accountId,
-      metadata: { platform: account.platform },
-    });
 
     revalidatePath('/dashboard/integrations');
     return { ok: true, data: { expiresAt: refreshed.expiresAt?.toISOString() ?? null } };
@@ -259,30 +270,44 @@ export async function getPageSelectionStateAction(stateId: string): Promise<
   ActionResult<{
     stateId: string;
     platform: string;
+    oauthPageCount: number;
     pages: Array<{
       id: string;
       name: string;
       category: string;
       picture_url: string | null;
       fan_count: number | null;
+      already_connected: boolean;
     }>;
   }>
 > {
   try {
-    const { userId } = await requireUserAndOrg();
+    const { userId, orgInfo } = await requireUserAndOrg();
     const oauthState = await loadStateForSelection(stateId, userId);
 
-    const pages = (oauthState.metadata.pages ?? []).map((p) => ({
-      id:          p.id,
-      name:        p.name,
-      category:    p.category,
-      picture_url: p.picture_url,
-      fan_count:   p.fan_count,
+    const connectedExternalIds = new Set(
+      await listActiveFacebookExternalIds(orgInfo.id),
+    );
+
+    const metaPages = oauthState.metadata.pages ?? [];
+
+    const pages = metaPages.map((p) => ({
+      id:                 p.id,
+      name:               p.name,
+      category:           p.category,
+      picture_url:        p.picture_url,
+      fan_count:          p.fan_count,
+      already_connected:  connectedExternalIds.has(p.id),
     }));
 
     return {
       ok: true,
-      data: { stateId, platform: oauthState.platform, pages },
+      data: {
+        stateId,
+        platform: oauthState.platform,
+        oauthPageCount: metaPages.length,
+        pages,
+      },
     };
   } catch (err) {
     return { ok: false, error: (err as Error).message };

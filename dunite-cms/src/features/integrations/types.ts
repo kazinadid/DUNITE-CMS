@@ -162,6 +162,8 @@ export interface OAuthStateMetadata {
   token_expires_at?: string | null;
   token_type?: TokenType;
   token_issued_at?: string;
+  /** Facebook User ID from Graph `/me` after OAuth */
+  facebook_user_id?: string;
   /** Available pages (with encrypted page tokens) */
   pages?: PendingFacebookPage[];
 }
@@ -205,11 +207,10 @@ export interface DiagnosticsIssue {
 // ── Required OAuth scopes ─────────────────────────────────────────────────────
 
 export const FACEBOOK_REQUIRED_SCOPES = [
-  'pages_show_list',
-  'pages_read_engagement',
   'pages_manage_posts',
-  'pages_manage_metadata',
-  'public_profile',
+  'pages_read_engagement',
+  'pages_show_list',
+  'business_management',
 ] as const;
 
 export type FacebookScope = (typeof FACEBOOK_REQUIRED_SCOPES)[number];

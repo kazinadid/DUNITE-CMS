@@ -11,7 +11,7 @@ import {
   Loader2,
   Users,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -29,6 +29,7 @@ interface AvailablePage {
   category: string;
   picture_url: string | null;
   fan_count: number | null;
+  already_connected: boolean;
 }
 
 interface FacebookPageSelectorProps {
@@ -38,12 +39,17 @@ interface FacebookPageSelectorProps {
 export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
   const router = useRouter();
 
-  const [pages, setPages]         = useState<AvailablePage[]>([]);
-  const [selected, setSelected]   = useState<Set<string>>(new Set());
-  const [loading, setLoading]     = useState(true);
-  const [saving, setSaving]       = useState(false);
-  const [error, setError]         = useState<string | null>(null);
-  const [platform, setPlatform]   = useState<string>('facebook');
+  const [pages, setPages] = useState<AvailablePage[]>([]);
+  const [oauthPageCount, setOauthPageCount] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const connectablePages = useMemo(
+    () => pages.filter((p) => !p.already_connected),
+    [pages],
+  );
 
   useEffect(() => {
     async function load() {
@@ -54,10 +60,11 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
         return;
       }
       setPages(res.data.pages);
-      setPlatform(res.data.platform);
-      // Pre-select all pages if only one available
-      if (res.data.pages.length === 1) {
-        setSelected(new Set([res.data.pages[0].id]));
+      setOauthPageCount(res.data.oauthPageCount);
+
+      const connectable = res.data.pages.filter((p) => !p.already_connected);
+      if (connectable.length === 1) {
+        setSelected(new Set([connectable[0].id]));
       }
       setLoading(false);
     }
@@ -65,6 +72,9 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
   }, [stateId]);
 
   function togglePage(pageId: string) {
+    const page = pages.find((p) => p.id === pageId);
+    if (page?.already_connected) return;
+
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(pageId)) next.delete(pageId);
@@ -83,18 +93,32 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
     const res = await selectFacebookPagesAction(stateId, Array.from(selected));
 
     if (res.ok) {
+      if (res.data.skipped.length > 0) {
+        toast.message(
+          `${res.data.skipped.length} page(s) skipped (already connected or could not save).`,
+        );
+      }
+
+      if (res.data.connected.length === 0) {
+        toast.warning('No new pages were connected.');
+        setSaving(false);
+        return;
+      }
+
       const count = res.data.connected.length;
       const firstName = res.data.connected[0]?.external_name ?? 'Page';
-      const msg = count === 1
-        ? `"${firstName}" connected successfully.`
-        : `${count} pages connected successfully.`;
+      const msg =
+        count === 1
+          ? `"${firstName}" connected successfully.`
+          : `${count} pages connected successfully.`;
 
       router.push(`/dashboard/integrations?connected=${encodeURIComponent(firstName)}`);
       toast.success(msg);
-    } else {
-      toast.error(res.error);
-      setSaving(false);
+      return;
     }
+
+    toast.error(res.error);
+    setSaving(false);
   }
 
   if (loading) {
@@ -125,7 +149,9 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
         <p className="text-sm font-semibold text-amber-800">No pages found</p>
         <p className="mt-1 text-sm text-amber-700">
-          No Facebook Pages were authorized. Make sure you granted access to at least one Page.
+          {oauthPageCount === 0
+            ? 'No Facebook Pages were authorized. Make sure you granted access to at least one Page.'
+            : 'Your authorized Pages could not be loaded for selection. Please reconnect.'}
         </p>
         <a
           href="/api/integrations/facebook/connect"
@@ -138,6 +164,21 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
     );
   }
 
+  if (connectablePages.length === 0) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center">
+        <p className="text-sm font-semibold text-emerald-900">All Pages already connected</p>
+        <p className="mt-1 text-sm text-emerald-800">
+          Every Page returned by Facebook for this login is already linked to your organization.
+          Disconnect a Page first if you need to reconnect it with a different token.
+        </p>
+        <Button className="mt-4" onClick={() => router.push('/dashboard/integrations')}>
+          Back to integrations
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div>
@@ -145,9 +186,13 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
           Select Pages to connect
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {pages.length === 1
+          {connectablePages.length === 1 && pages.length === 1
             ? 'The following Page was authorized. Click connect to add it.'
-            : `${pages.length} Pages were authorized. Select which ones to connect.`}
+            : `${connectablePages.length} Page${connectablePages.length !== 1 ? 's are' : ' is'} available to connect.${
+                pages.length > connectablePages.length
+                  ? ` (${pages.length - connectablePages.length} already linked)`
+                  : ''
+              }`}
         </p>
       </div>
 
@@ -155,16 +200,22 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
       <div className="space-y-2">
         {pages.map((page) => {
           const isSelected = selected.has(page.id);
+          const disabled = page.already_connected;
+
           return (
             <button
               key={page.id}
               type="button"
+              disabled={disabled}
+              aria-disabled={disabled}
               onClick={() => togglePage(page.id)}
               className={cn(
                 'w-full flex items-center gap-3 rounded-xl border p-4 text-left transition-all',
-                isSelected
-                  ? 'border-[#1877F2] bg-blue-50/60 ring-1 ring-[#1877F2]/40'
-                  : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50',
+                disabled && 'cursor-not-allowed opacity-60',
+                !disabled &&
+                  (isSelected
+                    ? 'border-[#1877F2] bg-blue-50/60 ring-1 ring-[#1877F2]/40'
+                    : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'),
               )}
             >
               {/* Avatar */}
@@ -189,7 +240,14 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
 
               {/* Info */}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-gray-900">{page.name}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="truncate text-sm font-semibold text-gray-900">{page.name}</p>
+                  {page.already_connected && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800">
+                      Connected
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground">{page.category}</p>
                 {page.fan_count != null && (
                   <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -203,12 +261,18 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
               <div
                 className={cn(
                   'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
-                  isSelected
-                    ? 'border-[#1877F2] bg-[#1877F2]'
-                    : 'border-gray-300 bg-white',
+                  page.already_connected && 'border-emerald-400 bg-emerald-50',
+                  !page.already_connected &&
+                    (isSelected
+                      ? 'border-[#1877F2] bg-[#1877F2]'
+                      : 'border-gray-300 bg-white'),
                 )}
               >
-                {isSelected && <CheckCircle2 size={12} className="text-white" aria-hidden />}
+                {page.already_connected ? (
+                  <CheckCircle2 size={12} className="text-emerald-600" aria-hidden />
+                ) : (
+                  isSelected && <CheckCircle2 size={12} className="text-white" aria-hidden />
+                )}
               </div>
             </button>
           );
@@ -216,14 +280,16 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
       </div>
 
       {/* ── Select all / deselect all ─────────────────────────────────── */}
-      {pages.length > 1 && (
+      {connectablePages.length > 1 && (
         <div className="flex gap-3 text-xs">
           <button
             type="button"
-            onClick={() => setSelected(new Set(pages.map((p) => p.id)))}
+            onClick={() =>
+              setSelected(new Set(connectablePages.map((p) => p.id)))
+            }
             className="text-[#1877F2] hover:underline"
           >
-            Select all
+            Select all available
           </button>
           <button
             type="button"
@@ -238,7 +304,7 @@ export function FacebookPageSelector({ stateId }: FacebookPageSelectorProps) {
       {/* ── Actions ────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 border-t border-gray-100 pt-4">
         <Button
-          onClick={handleSave}
+          onClick={() => void handleSave()}
           disabled={saving || selected.size === 0}
           className="gap-2 bg-[#1877F2] hover:bg-[#1665D8]"
         >

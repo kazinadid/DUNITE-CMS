@@ -5,11 +5,10 @@
 export const FACEBOOK_GRAPH_VERSION = 'v19.0' as const;
 
 export const FACEBOOK_OAUTH_SCOPES = [
-  'pages_show_list',
-  'pages_read_engagement',
   'pages_manage_posts',
-  'pages_manage_metadata',
-  'public_profile',
+  'pages_read_engagement',
+  'pages_show_list',
+  'business_management',
 ] as const;
 
 export type FacebookOAuthScope = (typeof FACEBOOK_OAUTH_SCOPES)[number];

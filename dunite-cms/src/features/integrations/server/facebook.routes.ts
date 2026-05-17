@@ -7,16 +7,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAuthenticatedSupabaseServerClient } from '@/lib/supabase/server';
 import {
-  completeState,
   generateOAuthState,
+  persistStateMetadata,
   validateAndConsumeState,
 } from './oauthAdapter';
 import { getUserDefaultOrganization } from './socialAccountsRepository';
 import { logOAuthActivity } from './integrationsActivityLogger';
 import {
   buildFacebookOAuthUrl,
-  connectAllAuthorizedFacebookPages,
   FacebookServiceError,
+  prepareOAuthSelectionMetadata,
 } from './facebook.service';
 
 function integrationsUrl(req: NextRequest): URL {
@@ -31,12 +31,6 @@ export function redirectWithIntegrationError(
   const url = integrationsUrl(req);
   url.searchParams.set('error', code);
   url.searchParams.set('message', message);
-  return NextResponse.redirect(url);
-}
-
-function redirectWithSuccess(req: NextRequest, pageCount: number) {
-  const url = integrationsUrl(req);
-  url.searchParams.set('connected', `${pageCount} Facebook Page${pageCount === 1 ? '' : 's'}`);
   return NextResponse.redirect(url);
 }
 
@@ -90,17 +84,20 @@ export async function startFacebookOAuth(req: NextRequest): Promise<NextResponse
       userAgent: req.headers.get('user-agent') ?? undefined,
     });
 
-    await logOAuthActivity({
-      userId,
-      organizationId: orgInfo.id,
-      actionType: 'social.facebook.oauth_started',
-      message: 'Facebook OAuth started.',
-      metadata: { provider: 'facebook' },
-    });
-
     return NextResponse.redirect(buildFacebookOAuthUrl(stateToken));
   } catch (err) {
     console.error('[facebook.routes] OAuth start failed:', err);
+    await logOAuthActivity({
+      userId,
+      organizationId: orgInfo.id,
+      actionType: 'oauth_failed',
+      message: 'Failed to start Facebook OAuth.',
+      metadata: {
+        provider: 'facebook',
+        phase: 'connect',
+        error: err instanceof FacebookServiceError ? err.code : 'facebook_oauth_start_failed',
+      },
+    });
     return redirectWithIntegrationError(
       req,
       err instanceof FacebookServiceError ? err.code : 'facebook_oauth_start_failed',
@@ -114,7 +111,8 @@ export async function handleFacebookOAuthCallback(req: NextRequest): Promise<Nex
   const code = searchParams.get('code');
   const state = searchParams.get('state');
   const oauthError = searchParams.get('error');
-  const oauthErrorDescription = searchParams.get('error_description') ?? searchParams.get('error_reason');
+  const oauthErrorDescription =
+    searchParams.get('error_description') ?? searchParams.get('error_reason');
 
   const { response, userId, orgInfo } = await getAuthenticatedUserAndOrg(req);
   if (response || !userId || !orgInfo) return response!;
@@ -123,9 +121,13 @@ export async function handleFacebookOAuthCallback(req: NextRequest): Promise<Nex
     await logOAuthActivity({
       userId,
       organizationId: orgInfo.id,
-      actionType: 'social.facebook.oauth_denied',
-      message: 'Facebook OAuth was denied or failed at Meta.',
-      metadata: { provider: 'facebook', error: oauthError, error_description: oauthErrorDescription },
+      actionType: 'oauth_failed',
+      message: oauthErrorDescription || 'Facebook OAuth was denied or failed at Meta.',
+      metadata: {
+        provider: 'facebook',
+        phase: 'callback',
+        meta_error: oauthError,
+      },
     });
 
     return redirectWithIntegrationError(
@@ -136,6 +138,13 @@ export async function handleFacebookOAuthCallback(req: NextRequest): Promise<Nex
   }
 
   if (!code || !state) {
+    await logOAuthActivity({
+      userId,
+      organizationId: orgInfo.id,
+      actionType: 'oauth_failed',
+      message: 'Facebook callback missing code or state.',
+      metadata: { provider: 'facebook', phase: 'callback' },
+    });
     return redirectWithIntegrationError(
       req,
       'invalid_callback',
@@ -156,6 +165,17 @@ export async function handleFacebookOAuthCallback(req: NextRequest): Promise<Nex
     }
   } catch (err) {
     console.error('[facebook.routes] State validation failed:', err);
+    await logOAuthActivity({
+      userId,
+      organizationId: orgInfo.id,
+      actionType: 'oauth_failed',
+      message: 'Facebook OAuth state validation failed.',
+      metadata: {
+        provider: 'facebook',
+        phase: 'state',
+        detail: (err as Error).message,
+      },
+    });
     return redirectWithIntegrationError(
       req,
       'invalid_oauth_state',
@@ -164,32 +184,34 @@ export async function handleFacebookOAuthCallback(req: NextRequest): Promise<Nex
   }
 
   try {
-    const connected = await connectAllAuthorizedFacebookPages({
-      organizationId: orgInfo.id,
-      connectedBy: userId,
-      code,
-    });
+    const { metadata } = await prepareOAuthSelectionMetadata(code);
+    await persistStateMetadata(stateId, metadata);
 
-    await completeState(stateId);
-    return redirectWithSuccess(req, connected.length);
+    const selectUrl = new URL('/dashboard/integrations/select-pages', req.url);
+    selectUrl.searchParams.set('state', stateId);
+    return NextResponse.redirect(selectUrl);
   } catch (err) {
     console.error('[facebook.routes] Callback failed:', err);
 
-    const code =
+    const errCode =
       err instanceof FacebookServiceError ? err.code : 'facebook_callback_failed';
     const message =
       err instanceof FacebookServiceError
         ? err.message
-        : 'Could not connect Facebook Pages. Please try again.';
+        : 'Could not complete Facebook authorization. Please try again.';
 
     await logOAuthActivity({
       userId,
       organizationId: orgInfo.id,
-      actionType: 'social.facebook.oauth_failed',
+      actionType: 'oauth_failed',
       message,
-      metadata: { provider: 'facebook', error: code },
+      metadata: {
+        provider: 'facebook',
+        phase: 'token_or_pages',
+        error: errCode,
+      },
     });
 
-    return redirectWithIntegrationError(req, code, message);
+    return redirectWithIntegrationError(req, errCode, message);
   }
 }

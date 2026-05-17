@@ -15,9 +15,7 @@ import type {
   TokenType,
   PendingFacebookPage,
 } from '../types';
-import { encryptToken } from '../lib/encryption';
 import { computeExpiresAt, computeTokenType } from '../lib/tokenManager';
-import { FACEBOOK_REQUIRED_SCOPES } from '../types';
 
 // ── Safe select (no token columns) ───────────────────────────────────────────
 
@@ -82,6 +80,7 @@ export interface SavePageConnectionInput {
   encryptedUserToken: string;
   userTokenExpiresIn: number;
   grantedScopes: string[];
+  facebookUserId: string;
 }
 
 /**
@@ -118,14 +117,16 @@ export async function savePageConnection(
     token_expires_at:      expiresAt?.toISOString() ?? null,
     token_type:            tokenType as TokenType,
     token_issued_at:       new Date().toISOString(),
+    facebook_user_id:      input.facebookUserId,
     granted_scopes:        input.grantedScopes,
-    permissions_metadata:  {},
+    permissions_metadata:  { requested_scopes: input.grantedScopes },
     page_metadata: {
       fan_count:       input.page.fan_count,
       followers_count: input.page.followers_count,
       tasks:           input.page.tasks,
     },
     metadata: {
+      facebook_user_id:  input.facebookUserId,
       page_url:          input.page.page_url,
       profile_image_url: input.page.picture_url,
       category:          input.page.category,
@@ -147,6 +148,26 @@ export async function savePageConnection(
 
   if (error) throw new Error(`[socialAccounts] savePageConnection: ${error.message}`);
   return data as unknown as SocialAccount;
+}
+
+/** Active Facebook Page external IDs for duplicate prevention (not disconnected). */
+export async function listActiveFacebookExternalIds(
+  organizationId: string,
+): Promise<string[]> {
+  const supabase = createSupabaseServiceRoleClient();
+
+  const { data, error } = await supabase
+    .from('social_accounts')
+    .select('external_id')
+    .eq('organization_id', organizationId)
+    .eq('platform', 'facebook')
+    .neq('status', 'disconnected');
+
+  if (error) {
+    throw new Error(`[socialAccounts] listActiveFacebookExternalIds: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => row.external_id as string);
 }
 
 // ── Disconnect ────────────────────────────────────────────────────────────────
