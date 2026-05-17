@@ -6,6 +6,8 @@ type AnalyticsAuditAction =
   | 'analytics_sync_started'
   | 'analytics_sync_completed'
   | 'analytics_sync_failed'
+  | 'analytics_manual_refresh'
+  | 'analytics_token_expired'
   | 'analytics_exported'
   | 'analytics_viewed';
 

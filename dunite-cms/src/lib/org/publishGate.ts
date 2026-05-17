@@ -104,3 +104,21 @@ export function canExportFacebookAnalytics(g: OrgPublishGate): boolean {
 export function canManageFacebookAnalyticsSync(g: OrgPublishGate): boolean {
   return canExportFacebookAnalytics(g);
 }
+
+/** Platform super-admin: cross-tenant monitoring hooks (UI + future global APIs). */
+export function isPlatformSuperAdmin(g: OrgPublishGate): boolean {
+  return g.isSuperAdmin === true;
+}
+
+/**
+ * Organization admin (or owner) — manual analytics refresh, sync center, reconnect flows.
+ * Editors/viewers are read-only for analytics data; viewers rely on same read gate with tighter export rules.
+ */
+export function isOrganizationAnalyticsAdmin(g: OrgPublishGate): boolean {
+  return g.isOrgOwner || g.orgRole === 'admin';
+}
+
+/** Read-only analytics (charts, post/page breakdowns). */
+export function canReadFacebookAnalyticsDetails(g: OrgPublishGate): boolean {
+  return canViewFacebookAnalytics(g);
+}

@@ -98,10 +98,9 @@ export function AnalyticsDashboardClient({
         if (accountId) params.set('socialAccountId', accountId);
         if (opts?.audit) params.set('auditView', '1');
 
-        const res = await fetch(
-          `/api/social/facebook/analytics/dashboard?${params.toString()}`,
-          { credentials: 'include' },
-        );
+        const res = await fetch(`/api/analytics/facebook/overview?${params.toString()}`, {
+          credentials: 'include',
+        });
         const json = (await res.json()) as {
           ok: boolean;
           data?: ApiPayload;

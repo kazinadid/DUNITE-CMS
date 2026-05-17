@@ -11,6 +11,8 @@ import {
   facebookAnalyticsSyncBodySchema,
   formatZodError,
 } from '@/lib/social/facebook/insights/validator';
+import { countConnectedFacebookAccounts } from '@/lib/social/facebook/analytics/facebookIntegrationPreflight';
+import { normalizeThrownError } from '@/lib/social/facebook/analytics/normalizeThrownError';
 import { syncOrganizationAnalytics, syncPostAnalytics } from '@/lib/social/facebook/insights/syncWorker';
 import { createAuthenticatedSupabaseServerClient } from '@/lib/supabase/server';
 
@@ -42,12 +44,19 @@ export async function POST(req: NextRequest) {
 
   const orgId = gate.organizationId;
 
+  const CONNECT_COPY =
+    'No connected platforms found. Please connect a platform first before syncing.';
   try {
+    const fbPages = await countConnectedFacebookAccounts(orgId);
+    if (fbPages < 1) {
+      return failJson(CONNECT_COPY, 422, 'facebook_not_connected');
+    }
+
     await insertAnalyticsAuditLog({
       userId,
       organizationId: orgId,
-      actionType: 'analytics_sync_started',
-      message: 'Manual Facebook analytics sync requested.',
+      actionType: 'analytics_manual_refresh',
+      message: 'Manual Facebook analytics refresh started.',
       metadata: {
         scoped_posts: parsed.data.postIds?.length ?? 0,
       },
@@ -82,6 +91,8 @@ export async function POST(req: NextRequest) {
 
     return okJson({ mode: 'workspace' as const, stats });
   } catch (e: unknown) {
-    return failJson(e instanceof Error ? e.message : 'sync_failed', 500);
+    const err = normalizeThrownError(e);
+    console.error('[analytics/sync]', err.message, err);
+    return failJson(err.message, 500);
   }
 }

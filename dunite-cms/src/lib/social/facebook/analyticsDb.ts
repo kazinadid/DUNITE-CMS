@@ -1,8 +1,13 @@
 import 'server-only';
 
+import { normalizeThrownError } from '@/lib/social/facebook/analytics/normalizeThrownError';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 
 import type { StoredPostAnalyticsSnapshot } from '@/lib/social/facebook/insights/aggregator';
+
+function throwAnalyticsDb(op: string, err: unknown): never {
+  throw new Error(`[analyticsDb] ${op}: ${normalizeThrownError(err).message}`);
+}
 
 export interface FacebookPostAnalyticsInsert {
   organizationId: string;
@@ -24,6 +29,8 @@ export interface FacebookPostAnalyticsInsert {
   metricDate: string;
   syncedAtIso: string;
   rawMetadata: Record<string, unknown>;
+  /** Optional idempotency / trace id written with the snapshot row */
+  syncJobId?: string | null;
 }
 
 export function mapRowToStored(r: Record<string, unknown>): StoredPostAnalyticsSnapshot {
@@ -68,11 +75,12 @@ export async function upsertFacebookPostAnalyticsPayload(
       metric_date:         row.metricDate,
       synced_at:           row.syncedAtIso,
       raw_metadata:        row.rawMetadata,
+      ...(row.syncJobId ? { sync_job_id: row.syncJobId } : {}),
     },
     { onConflict: 'post_id,metric_date' },
   );
 
-  if (error) throw new Error(`[analyticsDb] upsert post: ${error.message}`);
+  if (error) throwAnalyticsDb('upsert post', error);
 }
 
 export async function upsertFacebookPageAnalyticsPayload(payload: {
@@ -87,6 +95,7 @@ export async function upsertFacebookPageAnalyticsPayload(payload: {
   videoViews: number;
   ctr: number | null;
   rawMetadata: Record<string, unknown>;
+  syncJobId?: string | null;
 }): Promise<void> {
   const admin = createSupabaseAdminClient();
   const { error } = await admin.from('facebook_page_analytics').upsert(
@@ -103,10 +112,48 @@ export async function upsertFacebookPageAnalyticsPayload(payload: {
       metric_date:       payload.metricDate,
       synced_at:         new Date().toISOString(),
       raw_metadata:      payload.rawMetadata,
+      ...(payload.syncJobId ? { sync_job_id: payload.syncJobId } : {}),
     },
     { onConflict: 'social_account_id,metric_date' },
   );
-  if (error) throw new Error(`[analyticsDb] upsert page: ${error.message}`);
+  if (error) throwAnalyticsDb('upsert page', error);
+}
+
+export async function listFacebookPageAnalyticsPaged(opts: {
+  organizationId: string;
+  metricDateStart: string;
+  metricDateEnd: string;
+  socialAccountId?: string | null;
+  limit: number;
+  offset: number;
+  ascending?: boolean;
+}): Promise<{
+  rows: Array<Record<string, unknown>>;
+  total: number | null;
+}> {
+  const admin = createSupabaseAdminClient();
+  let base = admin
+    .from('facebook_page_analytics')
+    .select('*', { count: 'exact' })
+    .eq('organization_id', opts.organizationId)
+    .gte('metric_date', opts.metricDateStart)
+    .lte('metric_date', opts.metricDateEnd);
+
+  if (opts.socialAccountId) {
+    base = base.eq('social_account_id', opts.socialAccountId);
+  }
+
+  const ascending = opts.ascending ?? false;
+
+  base = base
+    .order('metric_date', { ascending })
+    .order('synced_at', { ascending })
+    .range(opts.offset, opts.offset + Math.max(opts.limit - 1, 0));
+
+  const { data, error, count } = await base;
+  if (error) throwAnalyticsDb('list page snapshots', error);
+
+  return { rows: (data ?? []) as Record<string, unknown>[], total: count };
 }
 
 export async function listFacebookPostAnalyticsRange(opts: {
@@ -131,7 +178,7 @@ export async function listFacebookPostAnalyticsRange(opts: {
   }
 
   const { data, error } = await q;
-  if (error) throw new Error(`[analyticsDb] list range: ${error.message}`);
+  if (error) throwAnalyticsDb('list range', error);
 
   return (data ?? []).map((r) =>
     mapRowToStored(r as unknown as Record<string, unknown>),
@@ -142,7 +189,7 @@ export async function listFacebookPostAnalyticsRange(opts: {
 export async function fetchLatestAnalyticsRowPerPost(opts: {
   organizationId: string;
   postIds?: string[];
-}): Promise<Array<StoredPostAnalyticsSnapshot & { synced_at?: string }>> {
+}): Promise<Array<StoredPostAnalyticsSnapshot & { synced_at?: string; social_account_id?: string }>> {
   const admin = createSupabaseAdminClient();
   let q = admin
     .from('facebook_post_analytics')
@@ -157,9 +204,12 @@ export async function fetchLatestAnalyticsRowPerPost(opts: {
   }
 
   const { data, error } = await q;
-  if (error) throw new Error(`[analyticsDb] latest rows: ${error.message}`);
+  if (error) throwAnalyticsDb('latest rows', error);
 
-  const best = new Map<string, StoredPostAnalyticsSnapshot & { synced_at?: string }>();
+  const best = new Map<
+    string,
+    StoredPostAnalyticsSnapshot & { synced_at?: string; social_account_id?: string }
+  >();
 
   const safeParse = (d: string) => Date.parse(`${d}T12:00:00Z`);
 
@@ -177,6 +227,8 @@ export async function fetchLatestAnalyticsRowPerPost(opts: {
         ...row,
         post_id: pid,
         synced_at: typeof obj.synced_at === 'string' ? obj.synced_at : undefined,
+        social_account_id:
+          typeof obj.social_account_id === 'string' ? obj.social_account_id : undefined,
       });
     }
   }
@@ -207,7 +259,7 @@ export async function listPostAnalyticsDescending(opts: {
     .eq('post_id', opts.postId)
     .order('metric_date', { ascending: false });
 
-  if (error) throw new Error(`[analyticsDb] list post snapshots: ${error.message}`);
+  if (error) throwAnalyticsDb('list post snapshots', error);
 
   return (data ?? []).map((raw) => {
     const obj = raw as Record<string, unknown>;
@@ -232,6 +284,8 @@ export async function startAnalyticsSyncLog(opts: {
   triggeredBy: 'cron' | 'manual' | 'worker';
 }): Promise<string> {
   const admin = createSupabaseAdminClient();
+  /** Align with Node `finalizeAnalyticsSyncLog` timestamps (avoid DB vs app clock skew). */
+  const startedAtIso = new Date().toISOString();
   const { data, error } = await admin
     .from('analytics_sync_logs')
     .insert({
@@ -239,11 +293,15 @@ export async function startAnalyticsSyncLog(opts: {
       status:           'running',
       triggered_by:     opts.triggeredBy,
       metadata:         {},
+      started_at:       startedAtIso,
     })
     .select('id')
     .single();
 
-  if (error || !data?.id) throw new Error(`[analyticsDb] sync log start: ${error?.message}`);
+  if (error) throwAnalyticsDb('sync log start', error);
+  if (!data?.id)
+    throw new Error('[analyticsDb] sync log start: missing id');
+
   return data.id as string;
 }
 
@@ -268,12 +326,13 @@ export async function finalizeAnalyticsSyncLog(opts: {
     })
     .eq('id', opts.id);
 
-  if (error) throw new Error(`[analyticsDb] sync log finalize: ${error.message}`);
+  if (error) throwAnalyticsDb('sync log finalize', error);
 }
 
 export async function updatePostFbAnalyticsColumns(opts: {
   postId: string;
   lastSyncedAt: string | null;
+  syncingStartedAt?: string | null;
   syncStatus:
     | 'pending'
     | 'syncing'
@@ -283,13 +342,173 @@ export async function updatePostFbAnalyticsColumns(opts: {
     | null;
 }): Promise<void> {
   const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from('posts')
-    .update({
-      fb_analytics_last_synced_at: opts.lastSyncedAt,
-      fb_analytics_sync_status:    opts.syncStatus,
-    })
-    .eq('id', opts.postId);
+  const patch: Record<string, string | null> = {
+    fb_analytics_last_synced_at: opts.lastSyncedAt,
+    fb_analytics_sync_status:    opts.syncStatus,
+  };
+  if (opts.syncingStartedAt !== undefined) {
+    patch.fb_analytics_syncing_started_at = opts.syncingStartedAt;
+  }
 
-  if (error) throw new Error(`[analyticsDb] post analytics columns: ${error.message}`);
+  const { error } = await admin.from('posts').update(patch).eq('id', opts.postId);
+
+  if (error) throwAnalyticsDb('post analytics columns', error);
+}
+
+export type FacebookAnalyticsQueueJobKind =
+  | 'facebook_post_refresh'
+  | 'facebook_page_refresh';
+
+export interface FacebookAnalyticsQueueRow {
+  id: string;
+  organization_id: string;
+  job_kind: FacebookAnalyticsQueueJobKind;
+  post_id: string | null;
+  social_account_id: string | null;
+  status: string;
+  retry_count: number;
+  max_retries: number;
+}
+
+export async function enqueueFacebookAnalyticsJob(input: {
+  organizationId: string;
+  jobKind: FacebookAnalyticsQueueJobKind;
+  postId?: string | null;
+  socialAccountId?: string | null;
+  idempotencyKey: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{ id: string | null; duplicate: boolean }> {
+  const admin = createSupabaseAdminClient();
+  const row = {
+    organization_id:   input.organizationId,
+    job_kind:          input.jobKind,
+    post_id:           input.postId ?? null,
+    social_account_id: input.socialAccountId ?? null,
+    idempotency_key:   input.idempotencyKey,
+    metadata:          input.metadata ?? {},
+    status:            'pending',
+  };
+
+  const { data, error } = await admin
+    .from('facebook_analytics_sync_queue')
+    .insert(row)
+    .select('id')
+    .maybeSingle();
+
+  if (error?.code === '23505') {
+    return { id: null, duplicate: true };
+  }
+  if (error) throwAnalyticsDb('enqueue job', error);
+  return { id: (data?.id as string) ?? null, duplicate: false };
+}
+
+export async function claimFacebookAnalyticsSyncJobs(
+  batchSize: number,
+  runnerId: string,
+  lockSeconds = 120,
+): Promise<FacebookAnalyticsQueueRow[]> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin.rpc('claim_facebook_analytics_sync_jobs', {
+    p_batch_size:    Math.min(200, Math.max(1, batchSize)),
+    p_runner_id:     runnerId,
+    p_lock_seconds: lockSeconds,
+  });
+
+  if (error) throwAnalyticsDb('claim jobs', error);
+  return (data ?? []) as unknown as FacebookAnalyticsQueueRow[];
+}
+
+export async function completeFacebookAnalyticsJob(opts: {
+  jobId: string;
+  outcome: 'completed' | 'failed' | 'dead';
+  lastError: string | null;
+  rescheduleMs?: number;
+}): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  const { data: existing, error: loadErr } = await admin
+    .from('facebook_analytics_sync_queue')
+    .select('retry_count,max_retries')
+    .eq('id', opts.jobId)
+    .single();
+
+  if (loadErr) throwAnalyticsDb('load job', loadErr);
+
+  const retry = Number(existing.retry_count ?? 0);
+  const max = Number(existing.max_retries ?? 6);
+
+  if (opts.outcome === 'completed') {
+    const { error } = await admin
+      .from('facebook_analytics_sync_queue')
+      .update({
+        status:               'completed',
+        last_error:           null,
+        locked_until:         null,
+        runner_lock:           null,
+        next_attempt_after:   new Date().toISOString(),
+      })
+      .eq('id', opts.jobId);
+    if (error) throwAnalyticsDb('complete job', error);
+    return;
+  }
+
+  const dead = retry + 1 >= max;
+  const backoff = opts.rescheduleMs ?? Math.min(3_600_000, 30_000 * Math.pow(2, retry));
+  const next = new Date(Date.now() + backoff).toISOString();
+
+  const { error } = await admin
+    .from('facebook_analytics_sync_queue')
+    .update(
+      dead
+        ? {
+            status:               'dead',
+            last_error:           opts.lastError,
+            retry_count:          retry + 1,
+            locked_until:         null,
+            runner_lock:           null,
+            next_attempt_after:   new Date().toISOString(),
+          }
+        : {
+            status:               'pending',
+            last_error:           opts.lastError,
+            retry_count:          retry + 1,
+            locked_until:         null,
+            runner_lock:           null,
+            next_attempt_after:   next,
+          },
+    )
+    .eq('id', opts.jobId);
+
+  if (error) throwAnalyticsDb('fail job', error);
+}
+
+export async function listRecentAnalyticsQueueForOrg(
+  organizationId: string,
+  limit = 50,
+): Promise<Record<string, unknown>[]> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from('facebook_analytics_sync_queue')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throwAnalyticsDb('list queue', error);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+export async function listRecentAnalyticsSyncLogs(
+  organizationId: string,
+  limit = 30,
+): Promise<Record<string, unknown>[]> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from('analytics_sync_logs')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .order('started_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throwAnalyticsDb('list sync logs', error);
+  return (data ?? []) as Record<string, unknown>[];
 }
