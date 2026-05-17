@@ -1245,7 +1245,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
               initialPost?.id && (
               <Section title="Facebook publishing">
                 <FacebookComposerActions
-                  postId={initialPost.id}
+                  post={initialPost}
                   userRole={userRole}
                 />
               </Section>
@@ -1255,7 +1255,22 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
             <ComposerValidationPanel platforms={platforms} report={validation} className="lg:hidden" />
 
             {/* Actions */}
-            <div className="sticky bottom-0 -mx-4 mt-2 flex flex-col gap-2 border-t border-gray-100 bg-white/80 px-4 py-3 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-end md:-mx-6 md:px-6">
+            <div className="sticky bottom-0 -mx-4 mt-2 flex flex-col gap-2 border-t border-gray-100 bg-white/80 px-4 py-3 backdrop-blur-sm sm:flex-row sm:items-end sm:justify-end md:-mx-6 md:px-6">
+              <p className="order-1 w-full text-[11px] leading-relaxed text-gray-500 sm:order-2 sm:max-w-md sm:text-right">
+                {isScheduling ? (
+                  <>
+                    <strong className="text-gray-700">Save &amp; schedule:</strong> stores this post
+                    in your CMS for the chosen time (does not post to Facebook).
+                  </>
+                ) : (
+                  <>
+                    <strong className="text-gray-700">Save &amp; publish:</strong> marks this post
+                    as published in your CMS only — use Facebook publishing above to send it to
+                    Meta.
+                  </>
+                )}
+              </p>
+              <div className="order-2 flex w-full flex-col gap-2 sm:order-1 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
               <Link
                 href="/dashboard/posts"
                 className="order-3 inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm text-gray-500 transition-colors duration-150 hover:text-gray-800 sm:order-1"
@@ -1282,6 +1297,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
                   : <Send size={15} aria-hidden />}
                 {primaryLabel}
               </button>
+              </div>
             </div>
           </main>
 

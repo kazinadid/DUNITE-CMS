@@ -67,7 +67,7 @@ export async function publishFacebookPost(
   const { data: post, error: pe } = await admin
     .from('posts')
     .select(
-      'id, organization_id, user_id, content, status, publish_attempt_count, external_post_id, social_account_id',
+      'id, organization_id, user_id, content, status, publish_attempt_count, external_post_id, social_account_id, publish_metadata',
     )
     .eq('id', ctx.postId)
     .maybeSingle();
@@ -116,10 +116,10 @@ export async function publishFacebookPost(
     );
   }
 
-  if (post.external_post_id && post.status === 'published') {
+  if (post.external_post_id) {
     throw new FacebookPermanentError(
-      'already_published',
-      'Post already carries a Facebook id.',
+      'already_published_facebook',
+      'This post was already sent to Facebook.',
       {},
     );
   }
@@ -215,9 +215,14 @@ export async function publishFacebookPost(
 
     pageToken = '';
 
+    const existingMeta =
+      post.publish_metadata &&
+      typeof post.publish_metadata === 'object' &&
+      !Array.isArray(post.publish_metadata)
+        ? (post.publish_metadata as Record<string, unknown>)
+        : {};
+
     await admin.from('posts').update({
-      status:                  'published',
-      published_at:            new Date().toISOString(),
       external_post_id:        externalId,
       social_account_id:       account.id,
       published_by:            ctx.gate.userId,
@@ -227,9 +232,12 @@ export async function publishFacebookPost(
       publish_locked_at:       null,
       publish_locked_by:       null,
       publish_metadata:        {
-        platform: 'facebook',
-        format,
-        social_account_id: account.id,
+        ...existingMeta,
+        facebook: {
+          external_post_id: externalId,
+          published_at:       new Date().toISOString(),
+          format,
+        },
       },
     }).eq('id', ctx.postId);
 
@@ -271,7 +279,6 @@ export async function publishFacebookPost(
         : (e instanceof Error ? e.message : 'facebook_publish_failed');
 
     await admin.from('posts').update({
-      status:                  'failed',
       last_publish_error:      sanitizeMessage(brief, 2048),
       last_publish_attempt_at: new Date().toISOString(),
       publish_attempt_count:   (post.publish_attempt_count ?? 0) + 1,
