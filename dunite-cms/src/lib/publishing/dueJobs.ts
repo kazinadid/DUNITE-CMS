@@ -10,10 +10,12 @@ export type DuePublishingJobRow = PublishingJob & { post_id: string };
 /** Rows ready for worker execution (`list_due_publishing_jobs`). Service-role only. */
 export async function fetchDuePublishingJobsForWorker(
   limit = 50,
+  platform: string | null = null,
 ): Promise<DuePublishingJobRow[]> {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin.rpc('list_due_publishing_jobs', {
     p_limit: limit,
+    p_platform: platform,
   });
   if (error) throw error;
   return (data ?? []) as DuePublishingJobRow[];

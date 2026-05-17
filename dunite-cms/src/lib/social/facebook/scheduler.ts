@@ -1,0 +1,108 @@
+import 'server-only';
+
+import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { fetchDuePublishingJobsForWorker } from '@/lib/publishing/dueJobs';
+import { insertPostPublishActivityLog } from '@/lib/activity/postActivityLog';
+import { resolveOrgPublishGate } from '@/lib/org/publishGate';
+import { cleanupStaleFacebookPublishLocks, publishFacebookPost } from './publisher';
+
+const DEFAULT_BATCH = 10;
+
+/** Bounded worker invoked from cron (`/api/cron/publish-scheduled`). */
+export async function runScheduledFacebookPublishingTick(): Promise<{
+  processed: number;
+  errors: string[];
+}> {
+  const cleaned = await cleanupStaleFacebookPublishLocks();
+  void cleaned;
+
+  const jobs = await fetchDuePublishingJobsForWorker(DEFAULT_BATCH, 'facebook');
+  const admin = createSupabaseAdminClient();
+  const errors: string[] = [];
+  let processed = 0;
+
+  for (const job of jobs) {
+    const postId = job.post_id;
+    if (!postId) continue;
+
+    const { data: post } = await admin
+      .from('posts')
+      .select('user_id, organization_id, social_account_id, publish_locked_at, status')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (!post?.social_account_id) {
+      errors.push(`post ${postId}: missing social_account_id`);
+      continue;
+    }
+
+    const gate = await resolveOrgPublishGate(post.user_id as string);
+    if (!gate || gate.organizationId !== post.organization_id) {
+      errors.push(`post ${postId}: invalid org gate`);
+      continue;
+    }
+
+    await insertPostPublishActivityLog({
+      userId: post.user_id as string,
+      postId,
+      actionType: 'scheduled_publish_started',
+      message: 'Scheduled Facebook publish picked up by worker.',
+      metadata: {
+        organization_id: gate.organizationId,
+        publishing_job_id: job.id,
+      },
+    });
+
+    const { error: markErr } = await admin
+      .from('publishing_jobs')
+      .update({
+        status:     'processing',
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id)
+      .in('status', ['queued', 'retrying']);
+
+    if (markErr) {
+      errors.push(`job ${job.id}: ${markErr.message}`);
+      continue;
+    }
+
+    try {
+      await publishFacebookPost({
+        postId,
+        socialAccountId: post.social_account_id as string,
+        gate,
+      });
+      processed += 1;
+
+      await insertPostPublishActivityLog({
+        userId: post.user_id as string,
+        postId,
+        actionType: 'scheduled_publish_completed',
+        message: 'Scheduled Facebook publish finished.',
+        metadata: {
+          organization_id: gate.organizationId,
+          publishing_job_id: job.id,
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'schedule_publish_failed';
+      errors.push(`post ${postId}: ${msg}`);
+
+      await insertPostPublishActivityLog({
+        userId: post.user_id as string,
+        postId,
+        actionType: 'publish_failed',
+        message: 'Scheduled Facebook publish failed.',
+        metadata: {
+          organization_id: gate.organizationId,
+          publishing_job_id: job.id,
+          detail: msg.slice(0, 400),
+        },
+      });
+    }
+  }
+
+  return { processed, errors };
+}

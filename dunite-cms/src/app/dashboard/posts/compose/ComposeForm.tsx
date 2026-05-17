@@ -40,6 +40,8 @@ import {
 import { canPublishPost } from '@/lib/rbac';
 import { supabase } from '@/lib/supabaseClient';
 
+import { FacebookComposerActions } from './FacebookComposerActions';
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 /** Minimum lead time for a scheduled post — 5 minutes from now. */
@@ -1237,6 +1239,17 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
                 </div>
               )}
             </Section>
+
+            {isEdit &&
+              platforms.includes('facebook') &&
+              initialPost?.id && (
+              <Section title="Facebook publishing">
+                <FacebookComposerActions
+                  postId={initialPost.id}
+                  userRole={userRole}
+                />
+              </Section>
+            )}
 
             {/* Validation banner — also shown above actions on mobile */}
             <ComposerValidationPanel platforms={platforms} report={validation} className="lg:hidden" />

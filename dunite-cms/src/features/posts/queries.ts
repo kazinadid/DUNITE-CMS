@@ -22,7 +22,9 @@ import type {
  * security boundary; this select is just the shape we want back.
  */
 export const POST_LIST_SELECT = `
-  id, user_id, content, status, scheduled_at, published_at, created_at, updated_at,
+  id, user_id, organization_id, content, status, scheduled_at, published_at, created_at, updated_at,
+  external_post_id, social_account_id, published_by, publish_metadata, last_publish_attempt_at,
+  publish_locked_at, publish_locked_by,
   last_publish_error, publish_attempt_count, failure_sort_key,
   author:users!posts_user_id_fkey ( id, name, email ),
   post_platforms ( platform ),
@@ -48,12 +50,20 @@ export const POST_SELECT = POST_LIST_SELECT;
 export interface RawPostRow {
   id: string;
   user_id: string;
+  organization_id?: string | null;
   content: string;
   status: PostStatus;
   scheduled_at: string | null;
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  external_post_id?: string | null;
+  social_account_id?: string | null;
+  published_by?: string | null;
+  publish_metadata?: Record<string, unknown> | null;
+  last_publish_attempt_at?: string | null;
+  publish_locked_at?: string | null;
+  publish_locked_by?: string | null;
   /** Present after migration `0005_posts_publish_audit`; missing on stale caches. */
   last_publish_error?: string | null;
   publish_attempt_count?: number | null;
@@ -181,12 +191,20 @@ export function mapPostRow(row: RawPostRow): Post {
   return {
     id:                     row.id,
     user_id:                row.user_id,
+    organization_id:        row.organization_id ?? null,
     content:                row.content,
     status:                 row.status,
     scheduled_at:           row.scheduled_at,
     published_at:           row.published_at,
     created_at:             row.created_at,
     updated_at:             row.updated_at,
+    external_post_id:       row.external_post_id ?? null,
+    social_account_id:      row.social_account_id ?? null,
+    published_by:           row.published_by ?? null,
+    publish_metadata:       row.publish_metadata ?? null,
+    last_publish_attempt_at: row.last_publish_attempt_at ?? null,
+    publish_locked_at:      row.publish_locked_at ?? null,
+    publish_locked_by:      row.publish_locked_by ?? null,
     last_publish_error:     row.last_publish_error ?? null,
     publish_attempt_count:  row.publish_attempt_count ?? 0,
     author:                 row.author,

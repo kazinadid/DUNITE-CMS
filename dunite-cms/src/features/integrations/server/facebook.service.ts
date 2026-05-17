@@ -18,7 +18,13 @@ import {
   type FacebookUserProfile,
 } from './facebook.types';
 
-const GRAPH_BASE_URL = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}`;
+function facebookRestBase(): string {
+  const ver =
+    process.env.FACEBOOK_GRAPH_API_VERSION?.trim() || FACEBOOK_GRAPH_VERSION;
+  return `https://graph.facebook.com/${ver}`;
+}
+
+const GRAPH_BASE_URL = facebookRestBase();
 const MAX_RETRIES = 2;
 
 export class FacebookServiceError extends Error {
@@ -122,6 +128,80 @@ async function graphFetch<T>(
     throw new FacebookServiceError(
       retryable ? 'facebook_rate_limited' : 'facebook_graph_error',
       graphError?.message ?? `Facebook ${label} failed with HTTP ${response.status}.`,
+      {
+        graphCode,
+        graphSubcode: graphError?.error_subcode,
+        retryable,
+      },
+    );
+  }
+
+  return body as T;
+}
+
+function graphTimeoutMs(): number {
+  const raw = process.env.FACEBOOK_API_TIMEOUT;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 120_000) : 25_000;
+}
+
+/**
+ * POST application/x-www-form-urlencoded to the Graph API (feed, photos, …).
+ * @server-only
+ */
+export async function facebookGraphPostForm<T extends Record<string, unknown>>(
+  relativePath: string,
+  formBody: URLSearchParams,
+  label: string,
+  attempt = 0,
+): Promise<T> {
+  const base = facebookRestBase();
+  const path = relativePath.startsWith('/') ? relativePath : `/${relativePath}`;
+  const url = `${base}${path}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'DUNITE-CMS/1.0',
+      },
+      body: formBody.toString(),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(graphTimeoutMs()),
+    });
+  } catch (err) {
+    if (attempt < MAX_RETRIES) {
+      await sleep(400 * (attempt + 1));
+      return facebookGraphPostForm<T>(relativePath, formBody, label, attempt + 1);
+    }
+    throw new FacebookServiceError(
+      'facebook_network_error',
+      `Facebook ${label} POST network failure: ${(err as Error).message}`,
+      { retryable: true },
+    );
+  }
+
+  const body = (await response.json().catch(() => ({}))) as FacebookGraphErrorShape & T;
+  const graphError = (body as FacebookGraphErrorShape).error;
+  if (!response.ok || graphError) {
+    const graphCode = graphError?.code ?? response.status;
+    const retryable =
+      response.status === 429 ||
+      response.status >= 500 ||
+      graphCode === 4 ||
+      graphCode === 17 ||
+      graphCode === 613;
+
+    if (retryable && attempt < MAX_RETRIES) {
+      await sleep(450 * (attempt + 1));
+      return facebookGraphPostForm<T>(relativePath, formBody, label, attempt + 1);
+    }
+
+    throw new FacebookServiceError(
+      retryable ? 'facebook_rate_limited' : 'facebook_graph_error',
+      graphError?.message ?? `Facebook ${label} POST failed with HTTP ${response.status}.`,
       {
         graphCode,
         graphSubcode: graphError?.error_subcode,
