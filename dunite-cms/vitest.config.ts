@@ -8,7 +8,10 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    /** Existing `.test.ts` files under imports use `node:test`; vitest loads only tz helpers here. */
-    include: ['src/lib/time/**/*.test.ts'],
+    /** Existing `.test.ts` files under imports use `node:test`; keep Vitest scoped. */
+    include: [
+      'src/lib/time/**/*.test.ts',
+      'src/features/calendar/**/*.test.ts',
+    ],
   },
 });

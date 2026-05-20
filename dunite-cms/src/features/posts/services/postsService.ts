@@ -9,6 +9,12 @@ import {
 import type { Post } from '../types';
 import type { StatusFilter } from '../types';
 
+interface CalendarFiltersLike {
+  platform: 'all' | string;
+  status: 'all' | string;
+  userId: 'all' | string;
+}
+
 // ── List / paging ─────────────────────────────────────────────────────────────
 
 /**
@@ -167,16 +173,79 @@ export async function getPost(id: string): Promise<Post | null> {
  * Used by `/dashboard/calendar`; RLS restricts rows to what the viewer may see.
  */
 export async function listCalendarPosts(startIso: string, endIso: string): Promise<Post[]> {
-  const { data, error } = await supabase
-    .from('posts')
-    .select(POST_SELECT)
-    .not('scheduled_at', 'is', null)
-    .gte('scheduled_at', startIso)
-    .lt('scheduled_at', endIso)
-    .order('scheduled_at', { ascending: true });
+  const params = new URLSearchParams({
+    start: startIso,
+    end: endIso,
+    page: '1',
+    pageSize: '500',
+  });
+  const res = await fetch(`/api/calendar/posts?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  const json = (await res.json()) as {
+    ok?: boolean;
+    error?: string;
+    data?: { items?: Post[] };
+  };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error ?? 'Could not load calendar posts');
+  }
+  return json.data?.items ?? [];
+}
 
-  if (error) throw error;
-  return ((data ?? []) as unknown as RawPostRow[]).map(mapPostRow);
+export async function listCalendarPostsWithFilters(args: {
+  startIso: string;
+  endIso: string;
+  filters: CalendarFiltersLike & {
+    failedOnly?: boolean;
+    scheduledOnly?: boolean;
+    mediaOnly?: boolean;
+  };
+  page?: number;
+  pageSize?: number;
+  cursor?: string;
+}): Promise<{ items: Post[]; total: number; hasMore: boolean; nextCursor: string | null }> {
+  const params = new URLSearchParams({
+    start: args.startIso,
+    end: args.endIso,
+    page: String(args.page ?? 1),
+    pageSize: String(args.pageSize ?? 250),
+  });
+  if (args.filters.platform && args.filters.platform !== 'all') {
+    params.set('platform', args.filters.platform);
+  }
+  if (args.filters.status && args.filters.status !== 'all') {
+    params.set('status', args.filters.status);
+  }
+  if (args.filters.userId && args.filters.userId !== 'all') {
+    params.set('userId', args.filters.userId);
+  }
+  if (args.filters.failedOnly) params.set('failedOnly', 'true');
+  if (args.filters.scheduledOnly) params.set('scheduledOnly', 'true');
+  if (args.filters.mediaOnly) params.set('mediaOnly', 'true');
+  if (args.cursor) params.set('cursor', args.cursor);
+
+  const res = await fetch(`/api/calendar/posts?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  const json = (await res.json()) as {
+    ok?: boolean;
+    error?: string;
+    data?: { items?: Post[]; total?: number; hasMore?: boolean; nextCursor?: string | null };
+  };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error ?? 'Could not load calendar posts');
+  }
+  return {
+    items: json.data?.items ?? [],
+    total: json.data?.total ?? 0,
+    hasMore: json.data?.hasMore ?? false,
+    nextCursor: json.data?.nextCursor ?? null,
+  };
 }
 
 // ── Writes ────────────────────────────────────────────────────────────────────
@@ -260,18 +329,81 @@ export async function duplicatePost(post: Post): Promise<Post> {
 export async function rescheduleCalendarPost(
   id: string,
   scheduledAtIso: string,
+  expectedUpdatedAt?: string,
 ): Promise<Post> {
-  const { error } = await supabase
-    .from('posts')
-    .update({
-      scheduled_at: scheduledAtIso,
-      updated_at:   new Date().toISOString(),
-    })
-    .eq('id', id);
+  const res = await fetch('/api/calendar/reschedule', {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      postId: id,
+      scheduledAtIsoUtc: scheduledAtIso,
+      ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    }),
+  });
+  const json = (await res.json()) as { ok?: boolean; error?: string; data?: { post?: Post } };
+  if (!res.ok || !json.ok || !json.data?.post) {
+    throw new Error(json.error ?? 'Could not reschedule post');
+  }
+  return json.data.post;
+}
 
-  if (error) throw error;
-  await syncPublishingPipeline(id);
-  return refetchPostListShape(id);
+export async function resizeCalendarPost(
+  id: string,
+  startAtIsoUtc: string,
+  endAtIsoUtc: string,
+  expectedUpdatedAt?: string,
+): Promise<Post> {
+  const res = await fetch('/api/calendar/resize', {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      postId: id,
+      startAtIsoUtc,
+      endAtIsoUtc,
+      ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    }),
+  });
+  const json = (await res.json()) as { ok?: boolean; error?: string; data?: { post?: Post } };
+  if (!res.ok || !json.ok || !json.data?.post) {
+    throw new Error(json.error ?? 'Could not resize post');
+  }
+  return json.data.post;
+}
+
+export async function bulkRescheduleCalendarPosts(items: Array<{
+  id: string;
+  scheduledAtIso: string;
+  expectedUpdatedAt?: string;
+}>): Promise<{ updated: Post[]; failed: Array<{ postId: string; error: string }> }> {
+  const res = await fetch('/api/calendar/bulk-reschedule', {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      items: items.map((x) => ({
+        postId: x.id,
+        scheduledAtIsoUtc: x.scheduledAtIso,
+        ...(x.expectedUpdatedAt ? { expectedUpdatedAt: x.expectedUpdatedAt } : {}),
+      })),
+    }),
+  });
+  const json = (await res.json()) as {
+    ok?: boolean;
+    error?: string;
+    data?: {
+      updated?: Post[];
+      failed?: Array<{ postId: string; error: string }>;
+    };
+  };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error ?? 'Bulk reschedule failed');
+  }
+  return {
+    updated: json.data?.updated ?? [],
+    failed: json.data?.failed ?? [],
+  };
 }
 
 /** Calendar/modal workflow edits — constrained columns; RLS is the gate. */

@@ -1,15 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 
 import type { Post } from '@/features/posts';
 
-import { postTzDebugIngest } from '@/lib/debug/tzDebugIngestClient';
 import {
-  datetimeLocalInterpretationZone,
   formatLocalDateTime,
   localDateKey,
-  resolveLocalTimeZone,
+  utcInstantMs,
 } from '@/lib/date';
 
 import { CalendarEventCard } from './CalendarEventCard';
@@ -51,8 +49,8 @@ export function CalendarMobileAgenda({
     const map = new Map<string, Post[]>();
     const sorted = [...posts].sort(
       (a, b) =>
-        new Date(a.scheduled_at ?? '').getTime() -
-        new Date(b.scheduled_at ?? '').getTime(),
+        (utcInstantMs(a.scheduled_at) ?? 0) -
+        (utcInstantMs(b.scheduled_at) ?? 0),
     );
     for (const p of sorted) {
       if (!p.scheduled_at) continue;
@@ -63,43 +61,6 @@ export function CalendarMobileAgenda({
     }
     return [...map.entries()].sort(([ka], [kb]) => ka.localeCompare(kb));
   }, [posts]);
-
-  useEffect(() => {
-    // #region agent log
-    if (typeof window === 'undefined') return;
-
-    let browserTz = 'unknown';
-
-    try {
-      browserTz =
-        Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'unknown';
-    } catch {
-      /* ignore */
-    }
-
-    const first = posts.find((p) => p.scheduled_at);
-
-    postTzDebugIngest({
-      sessionId:      'e436a7',
-      hypothesisId: 'MOBILE-AGENDA',
-      location:       'CalendarMobileAgenda.tsx:effect',
-      message:       'mobile agenda surface (calendar page md:hidden)',
-      data: {
-        workspaceTz:   resolveLocalTimeZone(),
-        interpZone:    datetimeLocalInterpretationZone(),
-        browserTz,
-        postCount:     posts.filter((p) => Boolean(p.scheduled_at)).length,
-        groupsCount:     groups.length,
-        firstUtcPrefix: typeof first?.scheduled_at === 'string'
-          ? first.scheduled_at.slice(0, 19)
-          : null,
-      },
-      timestamp: Date.now(),
-    });
-    // #endregion
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- ingest when grouping changes
-  }, [groups.length, posts]);
 
   if (groups.length === 0) {
     return emptyHint ?? null;

@@ -1,8 +1,14 @@
 'use client';
 
-import { DateTime } from 'luxon';
 import dynamic from 'next/dynamic';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 
 import type { Role } from '@/features/auth';
 import {
@@ -17,8 +23,17 @@ import {
 import { formatCalendarSlotTime } from '@/features/calendar/lib/formatTime';
 import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import { ReadOnlyBanner } from '@/features/dashboard';
-import { formatAbsolute, listCalendarPosts, rescheduleCalendarPost, type Post } from '@/features/posts';
-import { resolveLocalTimeZone } from '@/lib/date';
+import {
+  formatAbsolute,
+  listCalendarPostsWithFilters,
+  resizeCalendarPost,
+  rescheduleCalendarPost,
+  type Post,
+} from '@/features/posts';
+import {
+  resolveLocalTimeZone,
+  getCalendarViewportRangeUtc,
+} from '@/lib/datetime';
 import { canEditPost, isAdmin } from '@/lib/rbac';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -37,25 +52,57 @@ interface CalendarPageClientProps {
   role: Role;
 }
 
-export function CalendarPageClient({ role }: CalendarPageClientProps) {
+function readFiltersFromUrl(search: URLSearchParams): CalendarFilterState {
+  return {
+    platform: search.get('platform') ?? 'all',
+    status: (search.get('status') as CalendarFilterState['status']) ?? 'all',
+    userId: search.get('userId') ?? 'all',
+    failedOnly: search.get('failedOnly') === '1',
+    scheduledOnly: search.get('scheduledOnly') === '1',
+    mediaOnly: search.get('mediaOnly') === '1',
+  };
+}
+
+function writeFiltersToUrl(
+  pathname: string,
+  search: URLSearchParams,
+  filters: CalendarFilterState,
+): string {
+  const next = new URLSearchParams(search.toString());
+  const setOptional = (key: string, value: string, skip = 'all') => {
+    if (!value || value === skip) next.delete(key);
+    else next.set(key, value);
+  };
+  setOptional('platform', filters.platform);
+  setOptional('status', filters.status);
+  setOptional('userId', filters.userId);
+  if (filters.failedOnly) next.set('failedOnly', '1');
+  else next.delete('failedOnly');
+  if (filters.scheduledOnly) next.set('scheduledOnly', '1');
+  else next.delete('scheduledOnly');
+  if (filters.mediaOnly) next.set('mediaOnly', '1');
+  else next.delete('mediaOnly');
+  const qs = next.toString();
+  return qs ? `${pathname}?${qs}` : pathname;
+}
+
+function CalendarPageClientInner({ role }: CalendarPageClientProps) {
   const { dialog, success, error: showError, setDialogOpen } = useFeedback();
 
-  const rangeRef          = useRef<{ start: Date; end: Date } | null>(null);
-  const debouncePrefetch    = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastRangeRequestId = useRef(0);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const rangeRef = useRef<{ start: Date; end: Date } | null>(null);
+  const debouncePrefetch = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const allowDrag          = canEditPost(role);
+  const allowDrag = canEditPost(role);
 
-  const [posts,       setPosts]       = useState<Post[]>([]);
-  const [filters,     setFilters]     = useState<CalendarFilterState>({
-    platform: 'all',
-    status:   'all',
-    userId:   'all',
-  });
-  const [fetching, setFetching]       = useState(false);
-  /** True after the first in-flight range query resolves (success or error). */
-  const [ready, setReady]             = useState(false);
-  const [detailPost, setDetailPost]   = useState<Post | null>(null);
+  const [range, setRange] = useState<{ startIso: string; endIso: string } | null>(null);
+  const [filters, setFilters] = useState<CalendarFilterState>(() =>
+    readFiltersFromUrl(new URLSearchParams(searchParams.toString())),
+  );
+  const [detailPost, setDetailPost] = useState<Post | null>(null);
 
   const showUserFilter = isAdmin(role);
 
@@ -67,70 +114,107 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
     [filters, showUserFilter],
   );
 
-  const loadRange = useCallback(
-    async (start: Date, end: Date, quiet = false) => {
-      rangeRef.current = { start, end };
-      const req = ++lastRangeRequestId.current;
-      if (!quiet) setFetching(true);
-      try {
-        const rows = await listCalendarPosts(start.toISOString(), end.toISOString());
-        if (req !== lastRangeRequestId.current) return;
-        setPosts(rows);
-      } catch (e: unknown) {
-        if (req !== lastRangeRequestId.current) return;
-        const msg =
-          e instanceof Error ? e.message : 'Please check your connection and try again.';
-        showError({
-          title:       'Could not load calendar',
-          description: msg,
-        });
-      } finally {
-        if (req !== lastRangeRequestId.current) return;
-        if (!quiet) setFetching(false);
-        setReady(true);
-      }
-    },
-    [showError],
+  const queryKey = useMemo(
+    () => ['calendar-posts', range?.startIso, range?.endIso, effectiveFilters] as const,
+    [range?.startIso, range?.endIso, effectiveFilters],
   );
+
+  const calendarQuery = useQuery({
+    queryKey,
+    enabled: Boolean(range?.startIso && range?.endIso),
+    staleTime: 20_000,
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      if (!range) return { items: [] as Post[], total: 0, hasMore: false };
+      return listCalendarPostsWithFilters({
+        startIso: range.startIso,
+        endIso: range.endIso,
+        filters: effectiveFilters,
+        page: 1,
+        pageSize: 500,
+      });
+    },
+  });
+
+  const posts = calendarQuery.data?.items ?? [];
+  const ready = !calendarQuery.isLoading;
+  const fetching = calendarQuery.isFetching;
 
   /** Prime `[start,end)` aligned to **workspace** month boundaries (`resolveLocalTimeZone`). `new Date(y,m,d)` would use the browser/OS zone — different from FC's `timeZone` and corrupts `[gte scheduled_at lt)` filtering for remote editors. */
   useEffect(() => {
-    const z = resolveLocalTimeZone();
-    const startLux = DateTime.now().setZone(z).startOf('month');
-    const endLux = DateTime.now().setZone(z).plus({ months: 2 }).startOf('month');
-    const start = startLux.toJSDate();
-    const end = endLux.toJSDate();
+    const { startIso, endIso } = getCalendarViewportRangeUtc();
+    const start = new Date(startIso);
+    const end = new Date(endIso);
     const id = window.setTimeout(() => {
-      void loadRange(start, end);
+      rangeRef.current = { start, end };
+      setRange({ startIso, endIso });
     }, 0);
     return () => window.clearTimeout(id);
-  }, [loadRange]);
+  }, []);
 
   const scheduleRangeRefetch = useCallback(() => {
     if (debouncePrefetch.current) clearTimeout(debouncePrefetch.current);
     debouncePrefetch.current = setTimeout(() => {
-      const r = rangeRef.current;
-      if (r) void loadRange(r.start, r.end, true);
+      void queryClient.invalidateQueries({ queryKey: ['calendar-posts'] });
     }, 400);
-  }, [loadRange]);
+  }, [queryClient]);
 
   useEffect(() => {
     const channel = supabase
       .channel('calendar-posts')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'posts' },
-        () => {
-          scheduleRangeRefetch();
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'posts',
+          filter: `scheduled_at=not.is.null`,
+        },
+        (payload) => {
+          const newPost = payload.new as Record<string, unknown> | null;
+          const oldPost = payload.old as Record<string, unknown> | null;
+          
+          if (!rangeRef.current) return;
+          
+          const eventTime = (newPost?.scheduled_at || oldPost?.scheduled_at) as string | undefined;
+          if (!eventTime) return;
+          
+          const eventMs = new Date(eventTime).getTime();
+          const rangeStart = rangeRef.current.start.getTime();
+          const rangeEnd = rangeRef.current.end.getTime();
+          
+          if (eventMs >= rangeStart && eventMs < rangeEnd) {
+            scheduleRangeRefetch();
+          }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[calendar] Realtime subscription active (scoped to scheduled posts)');
+        }
+        if (status === 'CHANNEL_ERROR') {
+          console.error('[calendar] Realtime channel error, will refetch on reconnect');
+          scheduleRangeRefetch();
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
       if (debouncePrefetch.current) clearTimeout(debouncePrefetch.current);
     };
   }, [scheduleRangeRefetch]);
+
+  useEffect(() => {
+    const next = writeFiltersToUrl(pathname, new URLSearchParams(searchParams.toString()), filters);
+    const current = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
+    if (next !== current) {
+      router.replace(next, { scroll: false });
+    }
+  }, [filters, pathname, router, searchParams]);
+
+  const updateFilters = useCallback((next: CalendarFilterState) => {
+    setFilters(next);
+  }, []);
 
   const userOptions = useMemo(() => {
     const m = new Map<string, string>();
@@ -146,34 +230,18 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   }, [posts]);
 
-  const filteredPosts = useMemo(() => {
-    return posts.filter((p) => {
-      if (
-        effectiveFilters.platform !== 'all' &&
-        !p.platforms.includes(effectiveFilters.platform)
-      ) {
-        return false;
-      }
-      if (effectiveFilters.status !== 'all' && p.status !== effectiveFilters.status) {
-        return false;
-      }
-      if (effectiveFilters.userId !== 'all' && p.user_id !== effectiveFilters.userId) {
-        return false;
-      }
-      return true;
-    });
-  }, [posts, effectiveFilters]);
+  const filteredPosts = posts;
 
-  const filtersExcludeAll =
-    ready && posts.length > 0 && filteredPosts.length === 0;
+  const filtersExcludeAll = ready && posts.length > 0 && filteredPosts.length === 0;
 
   const trulyEmpty = ready && posts.length === 0;
 
   const handleDatesSet = useCallback(
     (start: Date, end: Date) => {
-      void loadRange(start, end);
+      rangeRef.current = { start, end };
+      setRange({ startIso: start.toISOString(), endIso: end.toISOString() });
     },
-    [loadRange],
+    [],
   );
 
   const handleOpenPost = useCallback((post: Post) => {
@@ -185,20 +253,43 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
   }, []);
 
   const handleDetailUpdated = useCallback((updated: Post) => {
-    setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    queryClient.setQueryData(
+      queryKey,
+      (prev: { items: Post[]; total: number; hasMore: boolean } | undefined) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items.map((p) => (p.id === updated.id ? updated : p)),
+        };
+      },
+    );
     setDetailPost((prev) => (prev?.id === updated.id ? updated : prev));
-  }, []);
+  }, [queryClient, queryKey]);
 
   const handleDetailRemoved = useCallback((id: string) => {
-    setPosts((prev) => prev.filter((p) => p.id !== id));
+    queryClient.setQueryData(
+      queryKey,
+      (prev: { items: Post[]; total: number; hasMore: boolean } | undefined) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items.filter((p) => p.id !== id),
+          total: Math.max(0, prev.total - 1),
+        };
+      },
+    );
     setDetailPost((prev) => (prev?.id === id ? null : prev));
-  }, []);
+  }, [queryClient, queryKey]);
 
   const handleReschedule = useCallback(
     async (post: Post, scheduledAtIsoUtc: string) => {
       try {
-        const updated = await rescheduleCalendarPost(post.id, scheduledAtIsoUtc);
-        setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        const updated = await rescheduleCalendarPost(
+          post.id,
+          scheduledAtIsoUtc,
+          post.updated_at,
+        );
+        handleDetailUpdated(updated);
         success({
           title:       'Post rescheduled',
           description:
@@ -215,13 +306,39 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
         throw e;
       }
     },
-    [showError, success],
+    [showError, success, handleDetailUpdated],
+  );
+
+  const handleResize = useCallback(
+    async (post: Post, startAtIsoUtc: string, endAtIsoUtc: string) => {
+      try {
+        const updated = await resizeCalendarPost(
+          post.id,
+          startAtIsoUtc,
+          endAtIsoUtc,
+          post.updated_at,
+        );
+        handleDetailUpdated(updated);
+        success({
+          title: 'Calendar block resized',
+          description: 'Publish instant updated; duration remains visual-only.',
+        });
+      } catch (e: unknown) {
+        const msg =
+          e instanceof Error ? e.message : 'You may not have permission to edit this post.';
+        showError({
+          title: 'Could not resize',
+          description: msg,
+        });
+        throw e;
+      }
+    },
+    [handleDetailUpdated, showError, success],
   );
 
   const handleRefresh = useCallback(() => {
-    const r = rangeRef.current;
-    if (r) void loadRange(r.start, r.end);
-  }, [loadRange]);
+    void queryClient.invalidateQueries({ queryKey: ['calendar-posts'] });
+  }, [queryClient]);
 
   return (
     <div className="space-y-6 p-4 md:p-6">
@@ -251,7 +368,7 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
       <div className="flex flex-col gap-4 rounded-2xl border border-border/60 bg-card/30 p-4 shadow-sm md:p-5">
         <CalendarFilters
           value={filters}
-          onChange={setFilters}
+          onChange={updateFilters}
           userOptions={userOptions}
           showUserFilter={showUserFilter}
         />
@@ -298,9 +415,29 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
             onDatesSet={handleDatesSet}
             onOpenPost={handleOpenPost}
             onReschedulePost={handleReschedule}
+            onResizePost={handleResize}
           />
         </div>
       </div>
     </div>
+  );
+}
+
+export function CalendarPageClient({ role }: CalendarPageClientProps) {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            retry: 1,
+          },
+        },
+      }),
+  );
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <CalendarPageClientInner role={role} />
+    </QueryClientProvider>
   );
 }

@@ -4,6 +4,7 @@ import luxon3Plugin from '@fullcalendar/luxon3';
 import interactionPlugin from '@fullcalendar/interaction';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
+import listPlugin from '@fullcalendar/list';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type {
   DatesSetArg,
@@ -12,21 +13,24 @@ import type {
   EventDropArg,
   EventMountArg,
 } from '@fullcalendar/core';
+import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 
 /* FullCalendar v6: base styles are injected at runtime — do not import removed index.css bundles. */
 
 import '@/features/calendar/styles/fullcalendar-dunite.css';
 
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 
 import type { Post } from '@/features/posts';
 
 import { CalendarPlannerEvent } from '@/features/calendar/components/CalendarPlannerEvent';
 import { paintFcEventElement } from '@/features/calendar/lib/paintFcEvent';
 import { postToEventInput } from '@/features/calendar/lib/toCalendarEvents';
-import { fcEventStartToUtcIso } from '@/features/calendar/lib/fcEventStartToUtcIso';
-import { postTzDebugIngest } from '@/lib/debug/tzDebugIngestClient';
-import { resolveLocalTimeZone } from '@/lib/date';
+import {
+  fcEventStartToUtcIso,
+  isUtcScheduleTooSoon,
+  resolveLocalTimeZone,
+} from '@/lib/datetime';
 
 interface ContentCalendarProps {
   posts:      Post[];
@@ -34,6 +38,7 @@ interface ContentCalendarProps {
   onDatesSet: (start: Date, end: Date) => void;
   onOpenPost: (post: Post) => void;
   onReschedulePost: (post: Post, scheduledAtIsoUtc: string) => Promise<void>;
+  onResizePost: (post: Post, startAtIsoUtc: string, endAtIsoUtc: string) => Promise<void>;
 }
 
 export function ContentCalendar({
@@ -42,6 +47,7 @@ export function ContentCalendar({
   onDatesSet,
   onOpenPost,
   onReschedulePost,
+  onResizePost,
 }: ContentCalendarProps) {
   const events = useMemo(
     () =>
@@ -51,51 +57,20 @@ export function ContentCalendar({
     [posts, allowDrag],
   );
 
-  useEffect(() => {
-    // #region agent log
-    if (typeof window === 'undefined') return;
-
-    let browserTz = 'unknown';
-
-    try {
-      browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'unknown';
-    } catch {
-      /* ignore */
-    }
-
-    postTzDebugIngest({
-      sessionId:      'e436a7',
-      hypothesisId: 'FC-MOUNT',
-      location:       'ContentCalendar.tsx:mount',
-      message:       'desktop FullCalendar subtree mounted',
-      data: {
-        workspaceTz:   resolveLocalTimeZone(),
-        browserTz,
-        scheduledCount: posts.filter((p) => Boolean(p.scheduled_at)).length,
-        narrowVp:
-          typeof window !== 'undefined'
-            ? (window.matchMedia?.('(max-width:767px)')?.matches ?? null)
-            : null,
-      },
-      timestamp: Date.now(),
-    });
-    // #endregion
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only probe
-  }, []);
-
   return (
     <div className="fc-calendar-shell min-h-[min(520px,70vh)] overflow-hidden rounded-[1.125rem] border border-border/75 bg-muted/35 shadow-[0_24px_64px_-32px_rgba(15,23,42,0.25),inset_0_1px_0_rgba(255,255,255,0.7)] backdrop-blur-[2px] md:min-h-[calc(100vh-15rem)] [&_.fc-toolbar]:sticky [&_.fc-toolbar]:top-0 [&_.fc-toolbar]:z-30 [&_.fc-toolbar]:mb-3 [&_.fc-toolbar]:rounded-xl [&_.fc-toolbar]:border [&_.fc-toolbar]:border-border/60 [&_.fc-toolbar]:bg-card/94 [&_.fc-toolbar]:px-2 [&_.fc-toolbar]:py-2 [&_.fc-toolbar]:shadow-sm [&_.fc-toolbar]:backdrop-blur-md [&_.fc-view-harness]:min-h-[320px] md:[&_.fc-view-harness]:min-h-[480px]">
       <FullCalendar
-        plugins={[luxon3Plugin, dayGridPlugin, timeGridPlugin, interactionPlugin]}
+        plugins={[luxon3Plugin, dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
         initialView="dayGridMonth"
         timeZone={resolveLocalTimeZone()}
         headerToolbar={{
           left:   'prev,next today',
           center: 'title',
-          right:  'dayGridMonth,timeGridWeek,timeGridDay',
+          right:  'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
         }}
         editable={allowDrag}
+        eventResizableFromStart={allowDrag}
+        eventDurationEditable={allowDrag}
         selectable={false}
         dayMaxEvents
         dayMaxEventRows={4}
@@ -108,31 +83,6 @@ export function ContentCalendar({
         height="auto"
         events={events}
         datesSet={(arg: DatesSetArg) => {
-          // #region agent log
-          if (typeof window !== 'undefined') {
-            let browserTz = 'unknown';
-            try {
-              browserTz =
-                Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'unknown';
-            } catch {
-              /* ignore */
-            }
-            postTzDebugIngest({
-              sessionId:      'e436a7',
-              hypothesisId: 'FC-VIEW',
-              location:      'ContentCalendar.tsx:datesSet',
-              message:      'FC visible window → drives listCalendarPosts [start,end)',
-              data: {
-                viewType:     arg.view.type,
-                startUtc:     arg.start.toISOString(),
-                endUtc:       arg.end.toISOString(),
-                workspaceTz:  resolveLocalTimeZone(),
-                browserTz,
-              },
-              timestamp: Date.now(),
-            });
-          }
-          // #endregion
           onDatesSet(arg.start, arg.end);
         }}
         eventDidMount={(info: EventMountArg) => {
@@ -154,7 +104,7 @@ export function ContentCalendar({
         eventDrop={(info: EventDropArg) => {
           const post = info.event.extendedProps.post as Post;
           const tz = resolveLocalTimeZone();
-          const { iso, meta } = fcEventStartToUtcIso(
+          const { iso } = fcEventStartToUtcIso(
             info.event.startStr,
             info.event.start,
             tz,
@@ -163,28 +113,25 @@ export function ContentCalendar({
             info.revert();
             return;
           }
-
-          // #region agent log
-          if (typeof window !== 'undefined') {
-            postTzDebugIngest({
-              sessionId:      'e436a7',
-              hypothesisId: 'FC-DROP',
-              location:       'ContentCalendar.tsx:eventDrop',
-              message:       'calendar drag reschedule',
-              data: {
-                iso,
-                workspaceTz:  tz,
-                fcStartStr:     info.event.startStr,
-                parseMeta:      meta,
-                postId:         post.id,
-                prevScheduled:  post.scheduled_at,
-              },
-              timestamp: Date.now(),
-            });
+          if (isUtcScheduleTooSoon(iso, 5 * 60 * 1000)) {
+            info.revert();
+            return;
           }
-          // #endregion
 
           void onReschedulePost(post, iso).catch(() => {
+            info.revert();
+          });
+        }}
+        eventResize={(info: EventResizeDoneArg) => {
+          const post = info.event.extendedProps.post as Post;
+          const tz = resolveLocalTimeZone();
+          const { iso } = fcEventStartToUtcIso(info.event.startStr, info.event.start, tz);
+          const end = info.event.end;
+          if (!iso || !end) {
+            info.revert();
+            return;
+          }
+          void onResizePost(post, iso, end.toISOString()).catch(() => {
             info.revert();
           });
         }}

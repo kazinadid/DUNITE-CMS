@@ -14,8 +14,15 @@ type DashboardUser = {
   name?: string | null;
 };
 
+type DashboardCounts = {
+  total: number;
+  scheduled: number;
+  failed: number;
+};
+
 export default function DashboardPage() {
   const [user, setUser] = useState<DashboardUser | null>(null);
+  const [counts, setCounts] = useState<DashboardCounts | null>(null);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -29,6 +36,21 @@ export default function DashboardPage() {
         .single();
 
       setUser(data);
+
+      const statsRes = await fetch('/api/dashboard/stats', {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      const statsJson = (await statsRes.json().catch(() => null)) as {
+        ok?: boolean;
+        data?: { counts?: DashboardCounts };
+      } | null;
+      if (statsRes.ok && statsJson?.ok && statsJson.data?.counts) {
+        setCounts(statsJson.data.counts);
+      } else {
+        setCounts({ total: 0, scheduled: 0, failed: 0 });
+      }
     };
     fetchUser();
   }, []);
@@ -69,9 +91,9 @@ export default function DashboardPage() {
       {/* ── Stat cards ──────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-2">
-          <StatCard label="Total posts"     value="0" />
-          <StatCard label="Scheduled posts" value="0" tone="warning" />
-          <StatCard label="Failed posts"    value="0" tone="danger"  />
+          <StatCard label="Total posts"     value={String(counts?.total ?? 0)} />
+          <StatCard label="Scheduled posts" value={String(counts?.scheduled ?? 0)} tone="warning" />
+          <StatCard label="Failed posts"    value={String(counts?.failed ?? 0)} tone="danger"  />
         </div>
         <div className="space-y-4 lg:col-span-1">
           <RecentNotificationsWidget />

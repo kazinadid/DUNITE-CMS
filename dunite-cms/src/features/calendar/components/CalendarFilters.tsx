@@ -9,6 +9,9 @@ export interface CalendarFilterState {
   platform: 'all' | string;
   status:    'all' | PostStatus;
   userId:    'all' | string;
+  failedOnly: boolean;
+  scheduledOnly: boolean;
+  mediaOnly: boolean;
 }
 
 interface UserOption {
@@ -110,6 +113,33 @@ export function CalendarFilters({
           </select>
         </label>
       )}
+
+      <label className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-medium text-foreground">
+        <input
+          type="checkbox"
+          checked={value.failedOnly}
+          onChange={(e) => onChange({ ...value, failedOnly: e.target.checked })}
+        />
+        Failed only
+      </label>
+
+      <label className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-medium text-foreground">
+        <input
+          type="checkbox"
+          checked={value.scheduledOnly}
+          onChange={(e) => onChange({ ...value, scheduledOnly: e.target.checked })}
+        />
+        Scheduled only
+      </label>
+
+      <label className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-medium text-foreground">
+        <input
+          type="checkbox"
+          checked={value.mediaOnly}
+          onChange={(e) => onChange({ ...value, mediaOnly: e.target.checked })}
+        />
+        With media
+      </label>
     </div>
   );
 }
