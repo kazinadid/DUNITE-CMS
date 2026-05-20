@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { SocialAccount } from '@/features/integrations/types';
+import { formatLocalDateTime } from '@/lib/date';
 
 import {
   describeAccount,
@@ -106,7 +107,7 @@ export function UnifiedPublishConfirmDialog({
   const preview = contentPreview.trim().slice(0, 150) || '(No content)';
   const truncated = contentPreview.trim().length > 150;
   const scheduleLabel = scheduledFor
-    ? new Date(scheduledFor).toLocaleString()
+    ? formatLocalDateTime(scheduledFor)
     : null;
 
   const canConfirm =

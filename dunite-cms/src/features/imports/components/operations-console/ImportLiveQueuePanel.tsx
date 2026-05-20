@@ -4,6 +4,7 @@ import { Activity, Cpu, Rows3, TrendingUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { formatLocalTime } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 import type { ImportJobListItem, ImportJobProgressPayload } from '../../types';
@@ -300,7 +301,7 @@ export function ImportLiveQueuePanel({
             <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
               <p className="text-[10px] font-medium uppercase tracking-wide">Now</p>
               <p className="mt-1 font-mono tabular-nums text-foreground">
-                {new Date(now).toLocaleTimeString()}
+                {formatLocalTime(now)}
               </p>
             </div>
           </div>

@@ -33,6 +33,7 @@ import {
 } from '../server/integrationsActions';
 import type { SocialAccount } from '../types';
 import { cn } from '@/lib/utils';
+import { formatLocalDateTime } from '@/lib/date';
 
 // ── Platform icons (Facebook logo as SVG inline) ──────────────────────────────
 
@@ -302,11 +303,14 @@ export function ConnectedPageCard({
       {account.last_validated_at && (
         <p className="text-[10px] text-muted-foreground">
           Last synced:{' '}
-          {new Date(account.last_validated_at).toLocaleDateString(undefined, {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
+          {formatLocalDateTime(account.last_validated_at, {
+            weekday: undefined,
+            year:    undefined,
+            month:   'short',
+            day:     'numeric',
+            hour:    '2-digit',
+            minute:  '2-digit',
+            hour12:  true,
           })}
         </p>
       )}

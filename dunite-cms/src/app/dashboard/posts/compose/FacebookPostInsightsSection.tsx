@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import {
   CartesianGrid,
@@ -14,6 +14,7 @@ import {
 
 import type { PostInsights } from '@/lib/social/facebook/insights/types';
 import { Button } from '@/components/ui/button';
+import { formatLocalDateTime } from '@/lib/date';
 import {
   Card,
   CardContent,
@@ -64,8 +65,9 @@ export function FacebookPostInsightsSection({ postId }: { postId: string }) {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiShape['data'] | null>(null);
+  const isMounted = useRef(true);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -76,21 +78,31 @@ export function FacebookPostInsightsSection({ postId }: { postId: string }) {
       if (!res.ok || !json.ok || !json.data) {
         throw new Error(json.error ?? 'Unable to load insights');
       }
-      setData(json.data);
+      if (isMounted.current) {
+        setData(json.data);
+      }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Unable to load insights');
-      setData(null);
+      if (isMounted.current) {
+        setError(e instanceof Error ? e.message : 'Unable to load insights');
+        setData(null);
+      }
     } finally {
-      setLoading(false);
+      if (isMounted.current) {
+        setLoading(false);
+      }
     }
-  }
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh only when post changes
   }, [postId]);
 
-  async function handleSyncSingle() {
+  useEffect(() => {
+    isMounted.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial data load on mount is a valid use case
+    void load();
+    return () => {
+      isMounted.current = false;
+    };
+  }, [load]);
+
+  const handleSyncSingle = useCallback(async () => {
     setSyncing(true);
     try {
       const res = await fetch('/api/social/facebook/analytics/sync', {
@@ -109,7 +121,7 @@ export function FacebookPostInsightsSection({ postId }: { postId: string }) {
     } finally {
       setSyncing(false);
     }
-  }
+  }, [postId, load]);
 
   const chartPoints = useMemo(
     () =>
@@ -173,7 +185,7 @@ export function FacebookPostInsightsSection({ postId }: { postId: string }) {
               variant="outline"
               className="gap-1.5"
               disabled={syncing}
-              onClick={() => void handleSyncSingle()}
+              onClick={handleSyncSingle}
             >
               {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Refresh metrics
@@ -223,7 +235,7 @@ export function FacebookPostInsightsSection({ postId }: { postId: string }) {
         <CardFooter className="text-xs text-muted-foreground">
           Last synced:{' '}
           {data.post.fbLastSyncedAt
-            ? new Date(data.post.fbLastSyncedAt).toLocaleString()
+            ? formatLocalDateTime(data.post.fbLastSyncedAt)
             : 'Never'}
           {ins?.syncedAtIso ? ` • snapshot ${ins.metricDate}` : ''}
         </CardFooter>

@@ -25,6 +25,7 @@ import {
   CardDescription,
   CardFooter,
 } from '@/components/ui/card';
+import { formatLocalDateTime } from '@/lib/date';
 
 type Capabilities = {
   export: boolean;
@@ -393,7 +394,7 @@ export function AnalyticsDashboardClient({
                     </td>
                     <td className="py-2 pr-2 text-xs text-muted-foreground">
                       {p.publishedAtIso
-                        ? new Date(p.publishedAtIso).toLocaleString()
+                        ? formatLocalDateTime(p.publishedAtIso)
                         : '—'}
                     </td>
                   </tr>

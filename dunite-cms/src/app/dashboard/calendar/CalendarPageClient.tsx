@@ -1,5 +1,6 @@
 'use client';
 
+import { DateTime } from 'luxon';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -17,6 +18,7 @@ import { formatCalendarSlotTime } from '@/features/calendar/lib/formatTime';
 import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import { ReadOnlyBanner } from '@/features/dashboard';
 import { formatAbsolute, listCalendarPosts, rescheduleCalendarPost, type Post } from '@/features/posts';
+import { resolveLocalTimeZone } from '@/lib/date';
 import { canEditPost, isAdmin } from '@/lib/rbac';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -91,11 +93,13 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
     [showError],
   );
 
-  /** Prime the same default window FullCalendar will use on desktop; mobile has no FC mount. */
+  /** Prime `[start,end)` aligned to **workspace** month boundaries (`resolveLocalTimeZone`). `new Date(y,m,d)` would use the browser/OS zone — different from FC's `timeZone` and corrupts `[gte scheduled_at lt)` filtering for remote editors. */
   useEffect(() => {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth() + 2, 1, 0, 0, 0, 0);
+    const z = resolveLocalTimeZone();
+    const startLux = DateTime.now().setZone(z).startOf('month');
+    const endLux = DateTime.now().setZone(z).plus({ months: 2 }).startOf('month');
+    const start = startLux.toJSDate();
+    const end = endLux.toJSDate();
     const id = window.setTimeout(() => {
       void loadRange(start, end);
     }, 0);
@@ -191,14 +195,15 @@ export function CalendarPageClient({ role }: CalendarPageClientProps) {
   }, []);
 
   const handleReschedule = useCallback(
-    async (post: Post, newStart: Date) => {
-      const iso = newStart.toISOString();
+    async (post: Post, scheduledAtIsoUtc: string) => {
       try {
-        const updated = await rescheduleCalendarPost(post.id, iso);
+        const updated = await rescheduleCalendarPost(post.id, scheduledAtIsoUtc);
         setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
         success({
           title:       'Post rescheduled',
-          description: `${formatCalendarSlotTime(updated.scheduled_at ?? iso)} · ${formatAbsolute(updated.scheduled_at ?? iso)}`,
+          description:
+            `${formatCalendarSlotTime(updated.scheduled_at ?? scheduledAtIsoUtc)} · `
+            + `${formatAbsolute(updated.scheduled_at ?? scheduledAtIsoUtc)}`,
         });
       } catch (e: unknown) {
         const msg =

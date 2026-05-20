@@ -1,5 +1,7 @@
 import type { Post } from '../types';
 
+import { utcInstantMs } from '@/lib/date';
+
 /**
  * Client-side checks for actionable issues — does not replace server validation.
  */
@@ -13,10 +15,12 @@ export function buildPostValidationWarnings(post: Post): string[] {
   }
   if (
     post.status === 'scheduled' &&
-    post.scheduled_at &&
-    Date.parse(post.scheduled_at) < Date.now() - 30_000
+    post.scheduled_at
   ) {
-    msgs.push('Scheduled time is in the past — reschedule or publish now.');
+    const atMs = utcInstantMs(post.scheduled_at);
+    if (atMs != null && atMs < Date.now() - 30_000) {
+      msgs.push('Scheduled time is in the past — reschedule or publish now.');
+    }
   }
   if (post.media.length === 0 && lengthyPostExpectsAssets(post.content)) {
     msgs.push(

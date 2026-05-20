@@ -9,6 +9,19 @@ function isPublicPath(pathname: string) {
   );
 }
 
+/**
+ * Bearer / secret–guarded APIs must not bounce to `/login` (no cookie on Vercel cron,
+ * ingest hooks, CLI curl, etc.).
+ */
+function bypassAuthGate(pathname: string): boolean {
+  if (pathname.startsWith('/api/cron')) return true;
+  // Bypass auth gate for debug ingest SPA/curl probes. Route handler still rejects
+  // non-dev workloads (403) so production surfaces only a minimal `{ error: ... }`.
+  // Edge middleware `NODE_ENV` can disagree with Node `next dev`; bypass must not rely on it.
+  if (pathname.startsWith('/api/debug/tz-ingest')) return true;
+  return false;
+}
+
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -42,7 +55,7 @@ export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const publicPath = isPublicPath(pathname);
 
-  if (!user && !publicPath) {
+  if (!user && !publicPath && !bypassAuthGate(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.searchParams.set('next', pathname);

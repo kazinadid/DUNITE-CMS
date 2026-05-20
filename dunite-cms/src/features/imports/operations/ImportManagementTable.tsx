@@ -14,6 +14,7 @@ import {
   listImportJobsPagedServerAction,
 } from '@/app/actions/importJobsActions';
 import { Button } from '@/components/ui/button';
+import { formatLocalDateTime } from '@/lib/date';
 import { canRunBatchImport, isAdmin } from '@/lib/rbac';
 import type { Role } from '@/features/auth';
 
@@ -57,27 +58,57 @@ export function ImportManagementTable({ role }: { role: Role }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await listImportJobsPagedServerAction({
-      page,
-      pageSize,
-      status: status === 'all' ? undefined : status,
-      sortKey,
-      sortDir,
-      search: search.trim() || undefined,
-      hideArchived,
-    });
-    setLoading(false);
-    if (!res.ok) {
-      toast.error(res.message);
-      return;
+    try {
+      const res = await listImportJobsPagedServerAction({
+        page,
+        pageSize,
+        status: status === 'all' ? undefined : status,
+        sortKey,
+        sortDir,
+        search: search.trim() || undefined,
+        hideArchived,
+      });
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      setRows(res.rows);
+      setTotal(res.total);
+    } finally {
+      setLoading(false);
     }
-    setRows(res.rows);
-    setTotal(res.total);
   }, [page, pageSize, status, sortKey, sortDir, search, hideArchived]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const res = await listImportJobsPagedServerAction({
+          page,
+          pageSize,
+          status: status === 'all' ? undefined : status,
+          sortKey,
+          sortDir,
+          search: search.trim() || undefined,
+          hideArchived,
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        setRows(res.rows);
+        setTotal(res.total);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [page, pageSize, status, sortKey, sortDir, search, hideArchived]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -215,6 +246,7 @@ export function ImportManagementTable({ role }: { role: Role }) {
         </div>
       )}
 
+      {/* eslint-disable react-hooks/refs */}
       <div
         ref={v.onContainerRef}
         className="relative max-h-[min(70vh,720px)] overflow-auto rounded-lg border border-foreground/10"
@@ -222,6 +254,7 @@ export function ImportManagementTable({ role }: { role: Role }) {
         role="region"
         aria-label="Import jobs table"
       >
+      {/* eslint-enable react-hooks/refs */}
         <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
           <thead className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
             <tr className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -264,6 +297,7 @@ export function ImportManagementTable({ role }: { role: Role }) {
           </thead>
           <tbody>
             {useVirtual && (
+              // eslint-disable-next-line react-hooks/refs -- offsetTop is a computed number, not a ref
               <tr aria-hidden style={{ height: v.offsetTop }}>
                 <td colSpan={colSpan} />
               </tr>
@@ -316,7 +350,7 @@ export function ImportManagementTable({ role }: { role: Role }) {
                     {r.queue_position ?? '—'}
                   </td>
                   <td className="px-2 py-1.5 align-middle text-xs text-muted-foreground whitespace-nowrap">
-                    {dayjs(r.created_at).format('MMM D, HH:mm')}
+                    {formatLocalDateTime(r.created_at, { weekday: undefined, year: undefined, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
                   </td>
                   <td className="px-2 py-1.5 align-middle text-xs tabular-nums text-muted-foreground">{fmtDuration(r.duration_ms)}</td>
                   <td className="px-2 py-1.5 align-middle">
@@ -326,6 +360,7 @@ export function ImportManagementTable({ role }: { role: Role }) {
               ))
             )}
             {useVirtual && !loading && rows.length > 0 && (
+              // eslint-disable-next-line react-hooks/refs -- offsetBottom is a computed number, not a ref
               <tr aria-hidden style={{ height: v.offsetBottom }}>
                 <td colSpan={colSpan} />
               </tr>

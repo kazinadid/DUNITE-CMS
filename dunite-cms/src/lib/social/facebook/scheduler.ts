@@ -17,6 +17,7 @@ export async function runScheduledFacebookPublishingTick(): Promise<{
   void cleaned;
 
   const jobs = await fetchDuePublishingJobsForWorker(DEFAULT_BATCH, 'facebook');
+
   const admin = createSupabaseAdminClient();
   const errors: string[] = [];
   let processed = 0;
@@ -75,6 +76,19 @@ export async function runScheduledFacebookPublishingTick(): Promise<{
         gate,
       });
       processed += 1;
+
+      // Belt-and-braces: `publishFacebookPost` already transitions to `published` and
+      // clears `scheduled_at`. Historically `scheduled_at` was left non-null because the
+      // follow-up used `.eq('status', 'scheduled')` while the row was already `published`.
+      const nowUtc = new Date().toISOString();
+      await admin
+        .from('posts')
+        .update({
+          scheduled_at: null,
+          updated_at:   nowUtc,
+        })
+        .eq('id', postId)
+        .eq('status', 'published');
 
       await insertPostPublishActivityLog({
         userId: post.user_id as string,

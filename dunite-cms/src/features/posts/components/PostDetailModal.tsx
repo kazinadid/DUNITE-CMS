@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, startTransition } from 'react';
+import { useEffect, useMemo, useState, startTransition } from 'react';
 
 import type { Role } from '@/features/auth';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  datetimeLocalInputToIso,
   formatCalendarScheduledDetail,
   formatCalendarSlotTime,
   isoToDatetimeLocalInput,
@@ -55,6 +56,7 @@ import {
   canPublishPost,
 } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
+import { isUtcScheduleTooSoon } from '@/lib/date';
 import { formatAbsolute } from '../lib/relativeTime';
 
 const MIN_LEAD_MS = 5 * 60 * 1000;
@@ -80,12 +82,23 @@ export function PostDetailModal({
   const [loaded, setLoaded]       = useState<Post | null>(null);
   const [busy, setBusy]           = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  /** Picker emptied after edits — avoids falling back to `draft.scheduled_at` when intentional. */
+  const [scheduledEmptyDirty, setScheduledEmptyDirty] = useState(false);
   const [scheduledInput, setScheduledInput] = useState('');
   const [scheduleMin, setScheduleMin] = useState('');
   const [fbConfirmOpen,    setFbConfirmOpen]    = useState(false);
   const [fbConfirmPending, setFbConfirmPending] = useState(false);
 
   const draft = loaded;
+
+  const effectiveScheduleIso = useMemo(() => {
+    if (!draft) return null;
+    const fromPick = scheduledInput ? datetimeLocalInputToIso(scheduledInput) : null;
+    const persisted =
+      draft.status === 'scheduled' ? draft.scheduled_at ?? null : null;
+    if (scheduledEmptyDirty) return fromPick ?? null;
+    return fromPick ?? persisted;
+  }, [draft, scheduledInput, scheduledEmptyDirty]);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +108,7 @@ export function PostDetailModal({
         if (!cancelled && full) {
           startTransition(() => {
             setLoaded(full);
+            setScheduledEmptyDirty(false);
             setScheduledInput(
               full.scheduled_at ? isoToDatetimeLocalInput(full.scheduled_at) : '',
             );
@@ -108,6 +122,7 @@ export function PostDetailModal({
           });
           startTransition(() => {
             setLoaded(post);
+            setScheduledEmptyDirty(false);
             setScheduledInput(
               post.scheduled_at ? isoToDatetimeLocalInput(post.scheduled_at) : '',
             );
@@ -123,7 +138,7 @@ export function PostDetailModal({
   useEffect(() => {
     if (!loaded) return;
     function tick() {
-      setScheduleMin(new Date(Date.now() + MIN_LEAD_MS).toISOString().slice(0, 16));
+      setScheduleMin(isoToDatetimeLocalInput(new Date(Date.now() + MIN_LEAD_MS).toISOString()));
     }
     tick();
     const tid = window.setInterval(tick, 60_000);
@@ -139,14 +154,12 @@ export function PostDetailModal({
 
   const handleRescheduleQuick = async () => {
     if (!draft || readPublishing) return;
-    const isoRaw = scheduledInput
-      ? new Date(scheduledInput).toISOString()
-      : draft.scheduled_at;
+    const isoRaw = effectiveScheduleIso;
     if (!isoRaw) {
       toastError({ title: 'Pick a datetime', description: 'Choose when to publish.' });
       return;
     }
-    if (Date.parse(isoRaw) < Date.now() + MIN_LEAD_MS - 999) {
+    if (isUtcScheduleTooSoon(isoRaw, MIN_LEAD_MS)) {
       toastError({
         title:       'Pick a later time',
         description: `Schedule at least ${MIN_LEAD_MS / 60000} minutes ahead.`,
@@ -162,6 +175,10 @@ export function PostDetailModal({
           scheduled_at: isoRaw,
         });
       }
+      setScheduledEmptyDirty(false);
+      setScheduledInput(
+        next.scheduled_at ? isoToDatetimeLocalInput(next.scheduled_at) : '',
+      );
       setLoaded(next);
       onPostUpdated(next);
       success({
@@ -605,7 +622,12 @@ export function PostDetailModal({
                         className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100"
                         value={scheduledInput}
                         min={scheduleMin || undefined}
-                        onChange={(e) => setScheduledInput(e.target.value)}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          if (!next) setScheduledEmptyDirty(true);
+                          else setScheduledEmptyDirty(false);
+                          setScheduledInput(next);
+                        }}
                       />
                       <Button
                         type="button"

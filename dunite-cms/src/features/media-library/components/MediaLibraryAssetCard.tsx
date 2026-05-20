@@ -23,6 +23,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { formatLocalDateTime } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 import { uploaderDisplayName } from '../lib/displayNames';
@@ -37,10 +38,14 @@ function categoryLabel(row: LibraryMediaRow): string {
 
 function shortDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return formatLocalDateTime(iso, {
+      weekday: undefined,
       month: 'short',
       day: 'numeric',
       year: 'numeric',
+      hour: undefined,
+      minute: undefined,
+      hour12: undefined,
     });
   } catch {
     return '—';

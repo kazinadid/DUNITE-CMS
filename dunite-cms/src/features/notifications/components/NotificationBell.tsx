@@ -27,6 +27,7 @@ import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { formatAbsolute } from '@/features/posts/lib/relativeTime';
+import { formatLocalDateTime, localDateKey } from '@/lib/date';
 import { supabase } from '@/lib/supabaseClient';
 import { cn } from '@/lib/utils';
 
@@ -51,13 +52,21 @@ const GAP = 8;
 const VIEWPORT_MARGIN = 16;
 
 function dayHeading(iso: string) {
-  const d     = new Date(iso);
   const today = new Date();
-  if (d.toDateString() === today.toDateString()) return 'Today';
+  const day = localDateKey(iso);
+  if (day === localDateKey(today)) return 'Today';
   const yest = new Date(today);
   yest.setDate(yest.getDate() - 1);
-  if (d.toDateString() === yest.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (day === localDateKey(yest)) return 'Yesterday';
+  return formatLocalDateTime(iso, {
+    weekday: undefined,
+    month:   'short',
+    day:     'numeric',
+    year:    undefined,
+    hour:    undefined,
+    minute:  undefined,
+    hour12:  undefined,
+  });
 }
 
 function PostLink({ id }: { id?: string }) {

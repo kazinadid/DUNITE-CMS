@@ -1,4 +1,4 @@
-import { extractHashtags } from './hashtags';
+import { utcInstantMs } from '@/lib/date';
 import { PLATFORMS } from './platforms';
 import { PLATFORM_BYTES_RULES, REEL_ASPECT_RATIO } from './platformRules';
 import { splitIntoTweetThread } from './twitterThread';
@@ -162,8 +162,8 @@ export function validatePost(
     if (!scheduledIso)
       push(issues, 'error', null, 'Pick a datetime to schedule.', 'schedule.missing');
     else {
-      const tMs = Date.parse(scheduledIso);
-      if (Number.isNaN(tMs))
+      const tMs = utcInstantMs(scheduledIso);
+      if (tMs == null)
         push(issues, 'error', null, 'That schedule value is invalid.', 'schedule.invalid');
       else if (tMs <= Date.now() + minLeadMs - 1)
         push(issues, 'error', null, 'Schedule at least five minutes ahead.', 'schedule.window');

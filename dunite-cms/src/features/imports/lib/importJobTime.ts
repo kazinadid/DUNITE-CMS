@@ -1,11 +1,22 @@
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 
+import { formatLocalDateTime } from '@/lib/date';
+
 dayjs.extend(relativeTime);
 
+/** Compact "May 20, 19:10" in the viewer's local zone. */
 export function formatShortDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return dayjs(iso).format('MMM D, HH:mm');
+  return formatLocalDateTime(iso, {
+    weekday: undefined,
+    year:    undefined,
+    month:   'short',
+    day:     'numeric',
+    hour:    '2-digit',
+    minute:  '2-digit',
+    hour12:  false,
+  });
 }
 
 export function formatRelativeFromNow(iso: string | null | undefined): string {

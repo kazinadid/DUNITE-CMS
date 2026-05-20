@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 
@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { formatLocalDateTime } from '@/lib/date';
 
 const NO_PLATFORM_COPY =
   'No connected platforms found. Please connect a platform first before syncing.';
@@ -80,8 +81,14 @@ export function FacebookSyncObservabilityPanel() {
     }
   }, []);
 
+  // Use a ref to track if initial load has been triggered to avoid setState in effect
+  const initialLoadTriggered = useRef(false);
+  
   useEffect(() => {
-    void load();
+    if (!initialLoadTriggered.current) {
+      initialLoadTriggered.current = true;
+      void load();
+    }
   }, [load]);
 
   async function handleManualSync() {
@@ -273,7 +280,7 @@ export function FacebookSyncObservabilityPanel() {
                       <td className="py-2 capitalize">{String(row.fb_analytics_sync_status ?? '—')}</td>
                       <td className="py-2 text-xs text-muted-foreground">
                         {row.fb_analytics_last_synced_at
-                          ? new Date(String(row.fb_analytics_last_synced_at)).toLocaleString()
+                          ? formatLocalDateTime(String(row.fb_analytics_last_synced_at))
                           : '—'}
                       </td>
                     </tr>

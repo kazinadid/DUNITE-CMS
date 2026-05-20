@@ -1,10 +1,9 @@
 'use client';
 
-import dayjs from 'dayjs';
 import { ArrowLeft, ExternalLink, ListTree, Loader2, Play, RefreshCw, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -19,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Role } from '@/features/auth';
+import { formatLocalDateTime } from '@/lib/date';
 import { canRunBatchImport } from '@/lib/rbac';
 
 import { useImportJobProgressPoll } from '../hooks/useImportJobProgressPoll';
@@ -159,12 +159,7 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
     }
   }, [jobId]);
 
-  useEffect(() => {
-    if (diagOpen) void loadDiag();
-  }, [diagOpen, loadDiag]);
-  useEffect(() => {
-    if (chunkOpen) void loadChunks();
-  }, [chunkOpen, loadChunks]);
+
 
   const runChunk = async () => {
     const res = await executeImportJobChunkServerAction(jobId);
@@ -387,24 +382,24 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
           <CardContent className="space-y-2 text-sm">
             <p>
               <span className="text-muted-foreground">Created</span>{' '}
-              <time dateTime={job.created_at}>{dayjs(job.created_at).format('MMM D, YYYY HH:mm')}</time>
+              <time dateTime={job.created_at}>{formatLocalDateTime(job.created_at, { weekday: undefined, month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</time>
             </p>
             {job.queued_at && (
               <p>
                 <span className="text-muted-foreground">Queued</span>{' '}
-                <time dateTime={job.queued_at}>{dayjs(job.queued_at).format('MMM D, YYYY HH:mm')}</time>
+                <time dateTime={job.queued_at}>{formatLocalDateTime(job.queued_at, { weekday: undefined, month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</time>
               </p>
             )}
             {job.started_at && (
               <p>
                 <span className="text-muted-foreground">Processing started</span>{' '}
-                <time dateTime={job.started_at}>{dayjs(job.started_at).format('MMM D, YYYY HH:mm')}</time>
+                <time dateTime={job.started_at}>{formatLocalDateTime(job.started_at, { weekday: undefined, month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</time>
               </p>
             )}
             {job.completed_at && (
               <p>
                 <span className="text-muted-foreground">Completed</span>{' '}
-                <time dateTime={job.completed_at}>{dayjs(job.completed_at).format('MMM D, YYYY HH:mm')}</time>
+                <time dateTime={job.completed_at}>{formatLocalDateTime(job.completed_at, { weekday: undefined, month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</time>
               </p>
             )}
             {display.rows_per_second != null && (
@@ -429,7 +424,10 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
             <CardTitle className="text-base">Chunk execution history</CardTitle>
             <CardDescription>Worker-level chunk timing, failures, and attempt diagnostics.</CardDescription>
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={() => setChunkOpen((v) => !v)}>
+          <Button type="button" variant="outline" size="sm" onClick={() => {
+            setChunkOpen((v) => !v);
+            if (!chunkOpen) void loadChunks();
+          }}>
             {chunkOpen ? 'Hide' : 'Show'} chunks
           </Button>
         </CardHeader>
@@ -467,7 +465,7 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
                         {attempt.error_message ? ` · ${attempt.error_message}` : ''}
                       </span>
                       <span className="shrink-0 text-muted-foreground">
-                        {dayjs(attempt.started_at).format('MMM D HH:mm:ss')}
+                        {formatLocalDateTime(attempt.started_at, { weekday: undefined, year: undefined, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                       </span>
                     </li>
                   ))}
@@ -493,7 +491,10 @@ export function ImportJobDetailClient({ role, detail }: ImportJobDetailClientPro
             <CardTitle className="text-base">Row failures</CardTitle>
             <CardDescription>Sample of failed rows (first 80 by row number).</CardDescription>
           </div>
-          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setDiagOpen((o) => !o)}>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => {
+            setDiagOpen((o) => !o);
+            if (!diagOpen) void loadDiag();
+          }}>
             <ListTree className="size-4" />
             Grouped diagnostics
           </Button>

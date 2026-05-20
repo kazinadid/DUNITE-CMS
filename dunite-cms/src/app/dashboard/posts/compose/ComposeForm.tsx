@@ -44,6 +44,13 @@ import {
   type LibraryMediaRow,
 } from '@/features/media-library';
 import { canPublishPost } from '@/lib/rbac';
+import {
+  datetimeLocalInterpretationZone,
+  formatLocalDateTime,
+  isoToLocalDatetimeInput,
+  localDatetimeInputToIso,
+  resolveLocalTimeZone,
+} from '@/lib/date';
 import { supabase } from '@/lib/supabaseClient';
 
 import { FacebookComposerActions } from './FacebookComposerActions';
@@ -237,11 +244,9 @@ class StepError extends Error {
 
 // ── Datetime helpers ────────────────────────────────────────────────────────
 
+// Use the timezone-safe version from lib/date.ts
 function isoToLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const tzOffset = d.getTimezoneOffset() * 60_000;
-  return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+  return isoToLocalDatetimeInput(iso);
 }
 
 // ── Media helpers ───────────────────────────────────────────────────────────
@@ -617,9 +622,10 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(
     initialPost?.status === 'scheduled' ? 'schedule' : 'now',
   );
-  const [scheduledAt,  setScheduledAt]  = useState(
-    isoToLocalInput(initialPost?.scheduled_at ?? null),
-  );
+
+  /** Picker cleared after edits — avoids falling back to persisted `scheduled_at` when intentional. */
+  const [scheduledEmptyDirty, setScheduledEmptyDirty] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState(() => isoToLocalInput(initialPost?.scheduled_at ?? null));
 
   const [loading,        setLoading]        = useState(false);
   const [loadingAction,  setLoadingAction]  = useState<LoadingAction>(null);
@@ -689,7 +695,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
   // Minimum schedule time ticks every minute so long-open tabs stay valid.
   useEffect(() => {
     const refresh = () => {
-      setScheduleMinInput(new Date(Date.now() + MIN_LEAD_MS).toISOString().slice(0, 16));
+      setScheduleMinInput(isoToLocalDatetimeInput(new Date(Date.now() + MIN_LEAD_MS)));
     };
     refresh();
     const id = window.setInterval(refresh, 60_000);
@@ -699,6 +705,29 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
   // ── Derived state ─────────────────────────────────────────────────────────
   const effectiveScheduleMode: ScheduleMode = allowDirectPublish ? scheduleMode : 'schedule';
   const isScheduling = effectiveScheduleMode === 'schedule';
+
+  const effectiveSchedulingIso = useMemo(() => {
+    if (!isScheduling) return null;
+
+    const fromPick = scheduledAt ? localDatetimeInputToIso(scheduledAt) : null;
+    const persisted =
+      initialPost?.status === 'scheduled' ? initialPost.scheduled_at ?? null : null;
+
+    if (scheduledEmptyDirty) return fromPick ?? null;
+
+    return fromPick ?? persisted;
+  }, [
+    isScheduling,
+    scheduledAt,
+    scheduledEmptyDirty,
+    initialPost?.status,
+    initialPost?.scheduled_at,
+  ]);
+
+  const facebookEffectiveScheduledIso = useMemo(() => {
+    if (!isScheduling) return initialPost?.scheduled_at ?? null;
+    return effectiveSchedulingIso;
+  }, [isScheduling, effectiveSchedulingIso, initialPost?.scheduled_at]);
 
   const tightestMediaCap = useMemo(() => {
     if (platforms.length === 0) return undefined;
@@ -780,15 +809,15 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
     return validatePost(
       { content, platforms, media: items },
       {
-        action:        isScheduling ? 'schedule' : 'publish',
-        scheduledIso:
-          isScheduling && scheduledAt
-          ? new Date(scheduledAt).toISOString()
-          : null,
-        minLeadMs:     MIN_LEAD_MS,
+        action: isScheduling ? 'schedule' : 'publish',
+        scheduledIso: isScheduling ? effectiveSchedulingIso : null,
+        minLeadMs:    MIN_LEAD_MS,
       },
     );
-  }, [content, platforms, items, isScheduling, scheduledAt]);
+  }, [content, platforms, items, isScheduling, effectiveSchedulingIso]);
+
+  /** When scheduling in the composer, honour the same `validatePost` gate as the primary Schedule button. */
+  const facebookComposerSchedulePasses = !isScheduling || validation.canSubmit;
 
   /** Draft saves stay permissive, but honor per-channel hard caps segment-by-segment for X threads. */
   const draftBlockedByChars = useMemo(() => {
@@ -990,6 +1019,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
     setItems([]);
     setRemoved([]);
     setScheduleMode('now');
+    setScheduledEmptyDirty(false);
     setScheduledAt('');
   }
 
@@ -1022,9 +1052,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
       :                          'published';
 
       const scheduledIso =
-        action === 'schedule'
-          ? new Date(scheduledAt).toISOString()
-          : null;
+        action === 'schedule' ? effectiveSchedulingIso : null;
 
       if (action === 'draft') {
         const postId = await saveDraft({
@@ -1079,10 +1107,10 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
 
       const title = willCallFacebook
         ? action === 'schedule'
-          ? `Scheduled on Facebook for ${new Date(scheduledAt).toLocaleString()}.`
+          ? `Scheduled on Facebook for ${formatLocalDateTime(scheduledIso)}.`
           : 'Published to Facebook successfully!'
         : action === 'schedule'
-        ? `Post scheduled for ${new Date(scheduledAt).toLocaleString()}.`
+        ? `Post scheduled for ${formatLocalDateTime(scheduledIso)}.`
         : isEdit
         ? 'Post updated and published.'
         : 'Post published successfully!';
@@ -1309,11 +1337,24 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
                     value={scheduledAt}
                     min={scheduleMinInput ?? undefined}
                     disabled={loading}
-                    onChange={(e) => setScheduledAt(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (!next) setScheduledEmptyDirty(true);
+                      else setScheduledEmptyDirty(false);
+                      setScheduledAt(next);
+                    }}
                     className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100 disabled:opacity-60 sm:w-auto"
                   />
-                  <p className="mt-1.5 text-xs text-gray-400">
-                    Must be at least 5 minutes from now.
+                  <p className="mt-1.5 space-y-1 text-xs text-gray-400">
+                    <span className="block">
+                      The picker interprets digits in your browser zone (
+                      <span className="font-medium">{datetimeLocalInterpretationZone()}</span>
+                      ) and converts to UTC. Times shown elsewhere in the dashboard use the CMS workspace
+                      zone (
+                      <span className="font-medium">{resolveLocalTimeZone()}</span>
+                      ).
+                    </span>
+                    <span className="block">Must be at least 5 minutes from now.</span>
                   </p>
                 </div>
               )}
@@ -1326,6 +1367,8 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
                 <FacebookComposerActions
                   post={initialPost}
                   userRole={userRole}
+                  cmsScheduledIso={facebookEffectiveScheduledIso}
+                  composerSchedulePasses={facebookComposerSchedulePasses}
                 />
               </Section>
             )}
@@ -1403,9 +1446,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
         mode={fbConfirmMode}
         contentPreview={content}
         scheduledFor={
-          fbConfirmMode === 'schedule' && scheduledAt
-            ? new Date(scheduledAt).toISOString()
-            : null
+          fbConfirmMode === 'schedule' ? effectiveSchedulingIso : null
         }
         initialAccountId={initialPost?.social_account_id ?? null}
         pending={fbConfirmPending}

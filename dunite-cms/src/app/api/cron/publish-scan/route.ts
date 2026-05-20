@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server';
 
 import { fetchDuePublishingJobsForWorker } from '@/lib/publishing/dueJobs';
+import { runScheduledFacebookPublishingTick } from '@/lib/social/facebook/scheduler';
 
 /**
- * Scheduled worker / platform probe: lists due jobs without executing network calls.
+ * Scheduled worker entrypoint.
+ *
+ * Historically this endpoint only listed due jobs, which meant a cron wired to
+ * `/api/cron/publish-scan` never actually published scheduled posts. Keep a
+ * dry-run mode for diagnostics, but execute due jobs by default so scheduled
+ * posts transition scheduled → publishing → published on time.
+ *
  * Protect with `Authorization: Bearer <CRON_SECRET>` (or equivalent in production).
  */
 export async function GET(request: Request) {
@@ -21,13 +28,27 @@ export async function GET(request: Request) {
   }
 
   try {
-    const limitParam = new URL(request.url).searchParams.get('limit');
+    const url = new URL(request.url);
+    const dryRun = url.searchParams.get('dryRun') === '1'
+      || url.searchParams.get('mode') === 'scan';
+    if (!dryRun) {
+      const result = await runScheduledFacebookPublishingTick();
+      return NextResponse.json({
+        ok:        true,
+        mode:      'execute',
+        processed: result.processed,
+        errors:    result.errors,
+      });
+    }
+
+    const limitParam = url.searchParams.get('limit');
     const limit = Math.min(200, Math.max(1, Number(limitParam) || 50));
 
     const jobs = await fetchDuePublishingJobsForWorker(limit);
 
     return NextResponse.json({
       ok:    true,
+      mode:  'scan',
       count: jobs.length,
       jobs,
     });

@@ -3,7 +3,12 @@
 // ----------------------------------------------------------------------------
 //  Linear / Notion / Buffer style "5m ago" / "in 2 days" timestamps.
 //  Uses the platform `Intl.RelativeTimeFormat` so localisation is automatic.
+//
+//  Absolute strings delegate to `@/lib/date` which pins formatting to
+//  {@link resolveLocalTimeZone} (explicit workspace TZ or browser fallback).
 // ============================================================================
+
+import { formatLocalDateTime, resolveLocalTimeZone } from '@/lib/date';
 
 const UNITS: { unit: Intl.RelativeTimeFormatUnit; ms: number }[] = [
   { unit: 'year',   ms: 1000 * 60 * 60 * 24 * 365 },
@@ -41,9 +46,10 @@ export function formatRelative(iso: string | null | undefined): string {
   // Older than ~6 months — show absolute date so users orient quickly.
   if (abs > 1000 * 60 * 60 * 24 * 30 * 6) {
     return date.toLocaleDateString(undefined, {
-      month: 'short',
-      day:   'numeric',
-      year:  'numeric',
+      timeZone: resolveLocalTimeZone(),
+      month:    'short',
+      day:      'numeric',
+      year:     'numeric',
     });
   }
 
@@ -56,14 +62,15 @@ export function formatRelative(iso: string | null | undefined): string {
   return '';
 }
 
-/** Same input, but always full date+time (used in tooltips). */
+/** Same input, but always full date+time in the viewer's local zone. */
 export function formatAbsolute(iso: string | null | undefined): string {
-  if (!iso) return '';
-  return new Date(iso).toLocaleString(undefined, {
-    month:  'short',
-    day:    'numeric',
-    year:   'numeric',
-    hour:   '2-digit',
-    minute: '2-digit',
+  return formatLocalDateTime(iso, {
+    weekday: undefined,
+    month:   'short',
+    day:     'numeric',
+    year:    'numeric',
+    hour:    '2-digit',
+    minute:  '2-digit',
+    hour12:  true,
   });
 }

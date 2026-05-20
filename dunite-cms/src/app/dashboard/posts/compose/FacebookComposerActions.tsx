@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { formatLocalDateTime } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 const LOCK_MS = 5 * 60 * 1000;
@@ -33,6 +34,15 @@ function isActivePublishLock(iso: string | null | undefined): boolean {
 interface FacebookComposerActionsProps {
   post: Post;
   userRole: Role;
+  /**
+   * The CMS scheduled instant the operator sees in `datetime-local` on the compose
+   * form (converted to UTC). When omitted, callers should pass `undefined` only on
+   * legacy surfaces — the edit composer always forwards this so the Facebook
+   * panel cannot drift behind unsaved picker changes or a stale SSR `initialPost`.
+   */
+  cmsScheduledIso?: string | null;
+  /** Mirrors the main composer "Schedule" CTA (`validatePost(..., { action: 'schedule' })`). */
+  composerSchedulePasses?: boolean;
 }
 
 type ConfirmMode = 'publish' | 'schedule';
@@ -40,6 +50,8 @@ type ConfirmMode = 'publish' | 'schedule';
 export function FacebookComposerActions({
   post,
   userRole,
+  cmsScheduledIso,
+  composerSchedulePasses = true,
 }: FacebookComposerActionsProps) {
   const router = useRouter();
   const postId = post.id;
@@ -59,9 +71,10 @@ export function FacebookComposerActions({
     [accounts, picked],
   );
   const preview = post.content.trim().slice(0, 150) || '(No content)';
-  const hasScheduleAt = Boolean(post.scheduled_at);
-  const scheduleFor = post.scheduled_at
-    ? new Date(post.scheduled_at).toLocaleString()
+  const resolvedCmsScheduledIso = cmsScheduledIso ?? post.scheduled_at ?? null;
+  const hasScheduleAt = Boolean(resolvedCmsScheduledIso);
+  const scheduleFor = resolvedCmsScheduledIso
+    ? formatLocalDateTime(resolvedCmsScheduledIso)
     : null;
 
   useEffect(() => {
@@ -103,9 +116,19 @@ export function FacebookComposerActions({
     if (!picked) return 'Select a target Page.';
     if (locked) return 'A publish is already in progress. Please wait.';
     if (!hasScheduleAt) return 'Set a CMS schedule first, then confirm Facebook scheduling.';
+    if (!composerSchedulePasses)
+      return 'Fix compose validation errors (same as the Schedule button) before scheduling on Facebook.';
     if (onFacebook) return 'This post was already sent to Facebook.';
     return null;
-  }, [loadingAccounts, accounts.length, picked, locked, hasScheduleAt, onFacebook]);
+  }, [
+    loadingAccounts,
+    accounts.length,
+    picked,
+    locked,
+    hasScheduleAt,
+    composerSchedulePasses,
+    onFacebook,
+  ]);
 
   async function parseApiResponse(res: Response) {
     const raw = (await res.json().catch(() => null)) as {
@@ -131,7 +154,8 @@ export function FacebookComposerActions({
             postId,
             socialAccountId: picked,
             scheduledFor:
-              post.scheduled_at ?? new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+              resolvedCmsScheduledIso ??
+              new Date(Date.now() + 5 * 60 * 1000).toISOString(),
           }
         : { postId };
     const res = await fetch(path, {

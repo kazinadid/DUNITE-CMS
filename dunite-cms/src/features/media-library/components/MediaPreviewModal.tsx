@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { Role } from '@/features/auth';
+import { formatLocalDateTime } from '@/lib/date';
 
 import { enqueueComposerMediaReuse } from '../lib/composerReuseQueue';
 import { uploaderDisplayName } from '../lib/displayNames';
@@ -34,7 +35,7 @@ function fmtBytes(n: number | null): string {
 
 function fmtDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString();
+    return formatLocalDateTime(iso);
   } catch {
     return iso;
   }

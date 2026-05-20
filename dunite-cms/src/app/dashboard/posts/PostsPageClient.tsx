@@ -62,9 +62,13 @@ import {
   canPublishPost,
   isAdmin,
 } from '@/lib/rbac';
+import { isUtcScheduleTooSoon } from '@/lib/date';
 import { supabase } from '@/lib/supabaseClient';
 
-import { isoToDatetimeLocalInput } from '@/features/calendar/lib/formatTime';
+import {
+  datetimeLocalInputToIso,
+  isoToDatetimeLocalInput,
+} from '@/features/calendar/lib/formatTime';
 
 const PAGE_SIZE = 24;
 const SCHEDULE_MIN_LEAD_MS = 5 * 60 * 1000;
@@ -548,19 +552,24 @@ export function PostsPageClient({
   };
 
   const openBulkSchedule = () => {
-    const minSlice = new Date(Date.now() + SCHEDULE_MIN_LEAD_MS).toISOString().slice(0, 16);
-    setBulkScheduleMin(minSlice);
+    const minIso = new Date(Date.now() + SCHEDULE_MIN_LEAD_MS).toISOString();
+    setBulkScheduleMin(isoToDatetimeLocalInput(minIso));
     setBulkScheduleInput(
-      isoToDatetimeLocalInput(
-        new Date(Date.now() + SCHEDULE_MIN_LEAD_MS).toISOString(),
-      ),
+      isoToDatetimeLocalInput(minIso),
     );
     setBulkScheduling(true);
   };
 
   const runBulkSchedule = async () => {
-    const iso = new Date(bulkScheduleInput).toISOString();
-    if (Date.parse(iso) < Date.now() + SCHEDULE_MIN_LEAD_MS - 999) {
+    const iso = datetimeLocalInputToIso(bulkScheduleInput);
+    if (!iso) {
+      showError({
+        title:       'Pick a valid time',
+        description: 'Choose a valid local date and time.',
+      });
+      return;
+    }
+    if (isUtcScheduleTooSoon(iso, SCHEDULE_MIN_LEAD_MS)) {
       showError({
         title:       'Pick a later time',
         description: `At least ${SCHEDULE_MIN_LEAD_MS / 60000} minutes ahead.`,

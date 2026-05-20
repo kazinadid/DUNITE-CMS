@@ -234,6 +234,7 @@ export async function publishFacebookPost(
     await admin.from('posts').update({
       status:                  'published',
       published_at:            successAt,
+      scheduled_at:            null,
       external_post_id:        externalId,
       social_account_id:       account.id,
       published_by:            ctx.gate.userId,

@@ -2,31 +2,33 @@
 
 import { memo, useMemo } from 'react';
 
+import { formatLocalDateTime, localDateKey } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 import { ActivityEntryCard } from './ActivityEntryCard';
 import type { ActivityLog } from '../types';
 
 function dayKey(iso: string) {
-  const d = new Date(iso);
-  return d.toISOString().slice(0, 10);
+  return localDateKey(iso);
 }
 
 function dayHeading(iso: string) {
-  const d     = new Date(iso);
+  const ds = localDateKey(iso);
   const today = new Date();
-  const yday  = new Date(today);
+  const yday = new Date(today);
   yday.setDate(yday.getDate() - 1);
-  const ds = d.toISOString().slice(0, 10);
-  const ts = today.toISOString().slice(0, 10);
-  const ys = yday.toISOString().slice(0, 10);
+  const ts = localDateKey(today);
+  const ys = localDateKey(yday);
   if (ds === ts) return 'Today';
   if (ds === ys) return 'Yesterday';
-  return d.toLocaleDateString(undefined, {
+  return formatLocalDateTime(iso, {
     weekday: 'long',
     month:   'short',
     day:     'numeric',
-    year:    d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+    year:    ds.slice(0, 4) !== ts.slice(0, 4) ? 'numeric' : undefined,
+    hour:    undefined,
+    minute:  undefined,
+    hour12:  undefined,
   });
 }
 

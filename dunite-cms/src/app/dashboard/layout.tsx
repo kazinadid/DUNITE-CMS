@@ -5,6 +5,15 @@ import { LogOut, Menu, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
+import {
+  ensureTzDebugExportHook,
+  postTzDebugIngest,
+} from '@/lib/debug/tzDebugIngestClient';
+
+import {
+  datetimeLocalInterpretationZone,
+  resolveLocalTimeZone,
+} from '@/lib/date';
 import { supabase } from '@/lib/supabaseClient';
 import type { Role } from '@/features/auth';
 import { AppToast } from '@/features/feedback';
@@ -49,6 +58,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const tzIngestBootRef = useRef(false);
 
   // Always pull the role from the DB (never trust the auth token alone).
   // We also subscribe to changes so role updates from /dashboard/users
@@ -112,6 +122,46 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // #region agent log
+  /** One-shot ingest when profile loads — proves SPA → `/api/debug/tz-ingest` without visiting calendar. */
+  useEffect(() => {
+    if (!user) return;
+    ensureTzDebugExportHook();
+    if (tzIngestBootRef.current) return;
+    tzIngestBootRef.current = true;
+
+    let browserTz = 'unknown';
+
+    try {
+      browserTz =
+        Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'unknown';
+    } catch {
+      /* ignore */
+    }
+
+    postTzDebugIngest({
+      sessionId:      'e436a7',
+      hypothesisId: 'DASH-MOUNT',
+      location:       'dashboard/layout.tsx:authenticated',
+      message:       'dashboard authenticated shell (timezone debug boot)',
+      data: {
+        pathname:       pathname ?? '',
+        origin:
+          typeof window.location?.origin === 'string'
+            ? window.location.origin
+            : '',
+        nodeEnvBundled: process.env.NODE_ENV,
+        workspaceTz: resolveLocalTimeZone(),
+        interpZone:    datetimeLocalInterpretationZone(),
+        browserTz,
+      },
+      timestamp: Date.now(),
+    });
+    /* tzIngestBootRef: one ping per dashboard session regardless of pathname changes. */
+  }, [user, pathname]);
+
+  // #endregion
 
   const handleLogout = async () => {
     await supabase.auth.signOut();

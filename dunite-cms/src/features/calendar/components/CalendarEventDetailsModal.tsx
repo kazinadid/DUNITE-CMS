@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { Role } from '@/features/auth';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { CalendarStatusPill } from '@/features/calendar/components/CalendarStatusPill';
 import {
+  datetimeLocalInputToIso,
   formatCalendarScheduledDetail,
   formatCalendarSlotTime,
   isoToDatetimeLocalInput,
@@ -53,6 +54,7 @@ import {
   canEditPost,
   canPublishPost,
 } from '@/lib/rbac';
+import { isUtcScheduleTooSoon } from '@/lib/date';
 
 const MIN_LEAD_MS = 5 * 60 * 1000;
 
@@ -86,15 +88,31 @@ export function CalendarEventDetailsModal({
   const [deleteOpen,     setDeleteOpen]     = useState(false);
   const [fbConfirmOpen,    setFbConfirmOpen]    = useState(false);
   const [fbConfirmPending, setFbConfirmPending] = useState(false);
-  const [scheduledInput, setScheduledInput] = useState(() =>
-    post?.scheduled_at ? isoToDatetimeLocalInput(post.scheduled_at) : '',
-  );
+  const postScheduleStamp =
+    `${post?.id ?? ''}|${post?.scheduled_at ?? ''}|${post?.status ?? ''}`;
+
+  // Derive initial scheduled input from post - Dialog key forces remount when post changes
+  const initialScheduledInput = useMemo(() => {
+    return post?.scheduled_at ? isoToDatetimeLocalInput(post.scheduled_at) : '';
+  }, [post]);
+
+  const [scheduledEmptyDirty, setScheduledEmptyDirty] = useState(false);
+  const [scheduledInput, setScheduledInput] = useState(initialScheduledInput);
   const [scheduleMin,    setScheduleMin]    = useState('');
+
+  const effectiveScheduleIso = useMemo(() => {
+    if (!post) return null;
+    const fromPick = scheduledInput ? datetimeLocalInputToIso(scheduledInput) : null;
+    const persisted =
+      post.status === 'scheduled' ? post.scheduled_at ?? null : null;
+    if (scheduledEmptyDirty) return fromPick ?? null;
+    return fromPick ?? persisted;
+  }, [post, scheduledInput, scheduledEmptyDirty]);
 
   useEffect(() => {
     if (!post) return;
     function tick() {
-      setScheduleMin(new Date(Date.now() + MIN_LEAD_MS).toISOString().slice(0, 16));
+      setScheduleMin(isoToDatetimeLocalInput(new Date(Date.now() + MIN_LEAD_MS).toISOString()));
     }
     tick();
     const id = window.setInterval(tick, 60_000);
@@ -113,11 +131,15 @@ export function CalendarEventDetailsModal({
 
   const handleRescheduleQuick = async () => {
     if (!post) return;
-    const isoRaw = scheduledInput
-      ? new Date(scheduledInput).toISOString()
-      : post.scheduled_at;
-    if (!isoRaw) return;
-    if (Date.parse(isoRaw) < Date.now() + MIN_LEAD_MS - 999) {
+    const isoRaw = effectiveScheduleIso;
+    if (!isoRaw) {
+      toastError({
+        title:       'Pick a datetime',
+        description: 'Choose when to reschedule, or restore a time first.',
+      });
+      return;
+    }
+    if (isUtcScheduleTooSoon(isoRaw, MIN_LEAD_MS)) {
       toastError({
         title:       'Pick a later time',
         description: `Schedule at least ${MIN_LEAD_MS / 60000} minutes ahead.`,
@@ -133,6 +155,10 @@ export function CalendarEventDetailsModal({
           scheduled_at: isoRaw,
         });
       }
+      setScheduledEmptyDirty(false);
+      setScheduledInput(
+        next.scheduled_at ? isoToDatetimeLocalInput(next.scheduled_at) : '',
+      );
       onPostUpdated(next);
       success({
         title:       'Rescheduled',
@@ -162,11 +188,9 @@ export function CalendarEventDetailsModal({
           break;
         case 'scheduled': {
           const at =
-            scheduledInput
-              ? new Date(scheduledInput).toISOString()
-              : post.scheduled_at;
+            effectiveScheduleIso ?? post.scheduled_at ?? null;
           if (!at) throw new Error('Choose a datetime first.');
-          if (Date.parse(at) < Date.now() + MIN_LEAD_MS - 999) {
+          if (isUtcScheduleTooSoon(at, MIN_LEAD_MS)) {
             throw new Error(
               `Pick a time at least ${MIN_LEAD_MS / 60000} minutes ahead.`,
             );
@@ -292,6 +316,7 @@ export function CalendarEventDetailsModal({
     <>
       <Dialog open onOpenChange={(open) => !open && onClose()}>
         <DialogContent
+          key={postScheduleStamp}
           showCloseButton
           overlayClassName="bg-black/45 backdrop-blur-[2px] duration-300 data-[state=open]:fade-in data-[state=closed]:fade-out"
           className="max-h-[min(94vh,calc(100vh-3rem))] gap-0 overflow-hidden rounded-2xl border border-border/85 p-0 shadow-[0_32px_100px_-40px_rgba(15,23,42,0.55)] ring-1 ring-black/[0.1] duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out sm:max-w-xl"
@@ -446,7 +471,12 @@ export function CalendarEventDetailsModal({
                       className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                       value={scheduledInput}
                       min={scheduleMin || undefined}
-                      onChange={(e) => setScheduledInput(e.target.value)}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (!next) setScheduledEmptyDirty(true);
+                        else setScheduledEmptyDirty(false);
+                        setScheduledInput(next);
+                      }}
                     />
                     <Button
                       type="button"
