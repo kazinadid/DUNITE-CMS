@@ -12,6 +12,8 @@ export { PostsBulkToolbar } from './components/PostsBulkToolbar';
 export { PostActionsMenu } from './components/PostActionsMenu';
 export type { PostAction } from './components/PostActionsMenu';
 export { PostDetailModal } from './components/PostDetailModal';
+export { UnifiedPublishConfirmDialog } from './components/UnifiedPublishConfirmDialog';
+export type { ConfirmMode as UnifiedConfirmMode } from './components/UnifiedPublishConfirmDialog';
 
 export { MediaThumbnail } from './components/MediaThumbnail';
 export { PostsSkeleton } from './components/PostsSkeleton';
@@ -23,6 +25,13 @@ export { PostPreviewDialog } from './components/PostPreviewDialog';
 // ── Lib ─────────────────────────────────────────────────────────────────────
 export { formatRelative, formatAbsolute } from './lib/relativeTime';
 export { buildPostValidationWarnings } from './lib/postValidation';
+export {
+  isActivePublishLock,
+  loadActiveFacebookAccounts,
+  publishToFacebook,
+  scheduleOnFacebook,
+  describeAccount,
+} from './lib/unifiedFacebookPublish';
 
 export {
   POST_LIST_SELECT,

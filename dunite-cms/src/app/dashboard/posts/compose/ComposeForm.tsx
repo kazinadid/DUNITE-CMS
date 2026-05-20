@@ -29,6 +29,12 @@ import {
 import { AppDialog, AppToast, useFeedback } from '@/features/feedback';
 import type { Post, PostMedia, WritablePostStatus } from '@/features/posts';
 import { syncPublishingPipeline } from '@/features/posts/services/postsService';
+import {
+  publishToFacebook,
+  scheduleOnFacebook,
+} from '@/features/posts/lib/unifiedFacebookPublish';
+import { UnifiedPublishConfirmDialog } from '@/features/posts/components/UnifiedPublishConfirmDialog';
+import type { SocialAccount } from '@/features/integrations/types';
 import type { Role } from '@/features/auth';
 import {
   cloneMediaRowToPost,
@@ -618,6 +624,14 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
   const [loading,        setLoading]        = useState(false);
   const [loadingAction,  setLoadingAction]  = useState<LoadingAction>(null);
 
+  // ── Facebook unified publish confirmation ────────────────────────────────
+  // When 'facebook' is in `platforms`, the primary Publish/Schedule buttons
+  // open this dialog so the operator can pick a target Page and confirm
+  // before we save the CMS post AND call the Facebook Graph API.
+  const [fbConfirmOpen,    setFbConfirmOpen]    = useState(false);
+  const [fbConfirmMode,    setFbConfirmMode]    = useState<'publish' | 'schedule'>('publish');
+  const [fbConfirmPending, setFbConfirmPending] = useState(false);
+
   /** Earliest `<input type="datetime-local">` value (5 min lead); updated outside render for ESLint purity. */
   const [scheduleMinInput, setScheduleMinInput] = useState<string | null>(null);
 
@@ -980,6 +994,132 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
   }
 
   // ── Submit ────────────────────────────────────────────────────────────────
+  /**
+   * Run the actual save (+ optional Facebook Graph API call) workflow.
+   *
+   * `facebookAccountId`, when provided, signals the user already picked a
+   * target Page in the unified confirmation dialog — the post is saved and
+   * then forwarded to the matching `/api/social/facebook/...` route.
+   * `publishFacebookPost()` (server) flips `posts.status` to `publishing` and
+   * then `published`/`failed`, so we keep the saved CMS row in a pre-publish
+   * state to avoid a brief "published in CMS but pending on FB" flash.
+   */
+  async function runSubmit(
+    action: SubmitAction,
+    facebookAccountId?: string,
+  ) {
+    setLoading(true);
+    setLoadingAction(action);
+
+    try {
+      const willCallFacebook =
+        Boolean(facebookAccountId) && (action === 'publish' || action === 'schedule');
+
+      const status: WritablePostStatus =
+        action === 'draft'    ? 'draft'
+      : action === 'schedule' ? 'scheduled'
+      : willCallFacebook      ? 'draft'
+      :                          'published';
+
+      const scheduledIso =
+        action === 'schedule'
+          ? new Date(scheduledAt).toISOString()
+          : null;
+
+      if (action === 'draft') {
+        const postId = await saveDraft({
+          isEdit,
+          initialPostId: initialPost?.id,
+          userId: userId!,
+          content,
+          platforms,
+          media: items,
+          removedMedia: removed,
+          onMediaPendingPatch: patchMediaPending,
+          onLibraryCloned: handleLibraryCloned,
+        });
+
+        await syncPublishingPipeline(postId);
+
+        showModalFeedback({
+          variant: 'success',
+          title: isEdit ? 'Draft updated' : 'Draft saved',
+          description: 'Your draft is saved and will appear in Posts.',
+        });
+
+        if (isEdit) setTimeout(() => router.push('/dashboard/posts'), 900);
+        else        resetForm();
+        return;
+      }
+
+      const postId = await savePostWithAssets({
+        isEdit,
+        initialPostId: initialPost?.id,
+        userId: userId!,
+        content,
+        status,
+        scheduledIso,
+        platforms,
+        media: items,
+        removedMedia: removed,
+        onMediaPendingPatch: patchMediaPending,
+        onLibraryCloned: handleLibraryCloned,
+      });
+
+      await syncPublishingPipeline(postId);
+
+      // ── Facebook leg ─────────────────────────────────────────────────────
+      if (willCallFacebook && facebookAccountId) {
+        if (action === 'publish') {
+          await publishToFacebook(postId, facebookAccountId);
+        } else if (action === 'schedule' && scheduledIso) {
+          await scheduleOnFacebook(postId, facebookAccountId, scheduledIso);
+        }
+      }
+
+      const title = willCallFacebook
+        ? action === 'schedule'
+          ? `Scheduled on Facebook for ${new Date(scheduledAt).toLocaleString()}.`
+          : 'Published to Facebook successfully!'
+        : action === 'schedule'
+        ? `Post scheduled for ${new Date(scheduledAt).toLocaleString()}.`
+        : isEdit
+        ? 'Post updated and published.'
+        : 'Post published successfully!';
+
+      showSuccess({
+        title,
+        description:
+          action === 'schedule'
+            ? 'It will appear in your scheduled posts feed.'
+            : 'Your posts feed is now up to date.',
+      });
+
+      if (isEdit) setTimeout(() => router.push('/dashboard/posts'), 900);
+      else        resetForm();
+    } catch (err) {
+      const step  = err instanceof StepError ? err.step : 'submit';
+      const cause = err instanceof StepError ? err.cause : err;
+      logError(step, cause);
+      console.error('[compose] user-safe error:', describeError(step, cause));
+
+      // Surface the Facebook API error message verbatim — those are already
+      // operator-friendly ("Post is already being published", "Connect a
+      // Page first", etc.) and otherwise get masked by the generic CMS copy.
+      const fbMsg =
+        step === 'submit' && cause instanceof Error ? cause.message : null;
+
+      showModalFeedback({
+        variant: 'error',
+        title: getActionErrorTitle(action),
+        description: fbMsg ?? getSafeErrorMessage(step),
+      });
+    } finally {
+      setLoading(false);
+      setLoadingAction(null);
+    }
+  }
+
   async function handleSubmit(action: SubmitAction) {
     if (!userId) {
       showModalFeedback({
@@ -1011,90 +1151,29 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
       return;
     }
 
-    setLoading(true);
-    setLoadingAction(action);
+    // When 'facebook' is one of the selected platforms, route Publish/Schedule
+    // through the unified confirmation dialog so the operator can pick a
+    // target Page and review the publish details first. Drafts skip the
+    // dialog and remain CMS-only.
+    if (action !== 'draft' && platforms.includes('facebook')) {
+      setFbConfirmMode(action === 'schedule' ? 'schedule' : 'publish');
+      setFbConfirmOpen(true);
+      return;
+    }
 
+    await runSubmit(action);
+  }
+
+  async function handleFbConfirm(account: SocialAccount) {
+    setFbConfirmPending(true);
     try {
-      const status: WritablePostStatus =
-        action === 'draft'    ? 'draft'
-      : action === 'schedule' ? 'scheduled'
-      :                          'published';
-
-      const scheduledIso =
-        action === 'schedule'
-          ? new Date(scheduledAt).toISOString()
-          : null;
-
-      if (action === 'draft') {
-        const postId = await saveDraft({
-          isEdit,
-          initialPostId: initialPost?.id,
-          userId,
-          content,
-          platforms,
-          media: items,
-          removedMedia: removed,
-          onMediaPendingPatch: patchMediaPending,
-          onLibraryCloned: handleLibraryCloned,
-        });
-
-        await syncPublishingPipeline(postId);
-
-        showModalFeedback({
-          variant: 'success',
-          title: isEdit ? 'Draft updated' : 'Draft saved',
-          description: 'Your draft is saved and will appear in Posts.',
-        });
-
-        if (isEdit) setTimeout(() => router.push('/dashboard/posts'), 900);
-        else        resetForm();
-        return;
-      }
-
-      const postId = await savePostWithAssets({
-        isEdit,
-        initialPostId: initialPost?.id,
-        userId,
-        content,
-        status,
-        scheduledIso,
-        platforms,
-        media: items,
-        removedMedia: removed,
-        onMediaPendingPatch: patchMediaPending,
-        onLibraryCloned: handleLibraryCloned,
-      });
-
-      await syncPublishingPipeline(postId);
-
-      const title =
-        action === 'schedule'
-          ? `Post scheduled for ${new Date(scheduledAt).toLocaleString()}.`
-          : isEdit ? 'Post updated and published.' : 'Post published successfully!';
-      showSuccess({
-        title,
-        description:
-          action === 'schedule'
-            ? 'It will appear in your scheduled posts feed.'
-            : 'Your posts feed is now up to date.',
-      });
-
-      if (isEdit) setTimeout(() => router.push('/dashboard/posts'), 900);
-      else        resetForm();
-    } catch (err) {
-      const step  = err instanceof StepError ? err.step : 'submit';
-      const cause = err instanceof StepError ? err.cause : err;
-      logError(step, cause);
-      console.error('[compose] user-safe error:', describeError(step, cause));
-
-      showModalFeedback({
-        variant: 'error',
-        title: getActionErrorTitle(action),
-        description: getSafeErrorMessage(step),
-      });
+      await runSubmit(
+        fbConfirmMode === 'schedule' ? 'schedule' : 'publish',
+        account.id,
+      );
+      setFbConfirmOpen(false);
     } finally {
-      setLoading(false);
-      setLoadingAction(null);
+      setFbConfirmPending(false);
     }
   }
 
@@ -1255,25 +1334,10 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
             <ComposerValidationPanel platforms={platforms} report={validation} className="lg:hidden" />
 
             {/* Actions */}
-            <div className="sticky bottom-0 -mx-4 mt-2 flex flex-col gap-2 border-t border-gray-100 bg-white/80 px-4 py-3 backdrop-blur-sm sm:flex-row sm:items-end sm:justify-end md:-mx-6 md:px-6">
-              <p className="order-1 w-full text-[11px] leading-relaxed text-gray-500 sm:order-2 sm:max-w-md sm:text-right">
-                {isScheduling ? (
-                  <>
-                    <strong className="text-gray-700">Save &amp; schedule:</strong> stores this post
-                    in your CMS for the chosen time (does not post to Facebook).
-                  </>
-                ) : (
-                  <>
-                    <strong className="text-gray-700">Save &amp; publish:</strong> marks this post
-                    as published in your CMS only — use Facebook publishing above to send it to
-                    Meta.
-                  </>
-                )}
-              </p>
-              <div className="order-2 flex w-full flex-col gap-2 sm:order-1 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+            <div className="sticky bottom-0 -mx-4 mt-2 flex items-end justify-end gap-2 border-t border-gray-100 bg-white/80 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6">
               <Link
                 href="/dashboard/posts"
-                className="order-3 inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm text-gray-500 transition-colors duration-150 hover:text-gray-800 sm:order-1"
+                className="inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm text-gray-500 transition-colors duration-150 hover:text-gray-800"
               >
                 Cancel
               </Link>
@@ -1281,7 +1345,7 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
                 type="button"
                 onClick={() => handleSubmit('draft')}
                 disabled={!canDraft}
-                className="order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
               >
                 {draftLoading && <Loader2 size={15} className="animate-spin" aria-hidden />}
                 {draftLabel}
@@ -1290,14 +1354,13 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
                 type="button"
                 onClick={() => handleSubmit(primaryAction)}
                 disabled={!canPrimary}
-                className="order-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#7A0000] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-[#5A0000] disabled:cursor-not-allowed disabled:opacity-50 sm:order-3"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#7A0000] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-[#5A0000] disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
               >
                 {primaryLoading
                   ? <Loader2 size={15} className="animate-spin" aria-hidden />
                   : <Send size={15} aria-hidden />}
                 {primaryLabel}
               </button>
-              </div>
             </div>
           </main>
 
@@ -1334,6 +1397,24 @@ export function ComposeForm({ initialPost, userRole }: ComposeFormProps) {
           onConfirm={handleConfirmLibraryPick}
         />
       )}
+
+      <UnifiedPublishConfirmDialog
+        open={fbConfirmOpen}
+        mode={fbConfirmMode}
+        contentPreview={content}
+        scheduledFor={
+          fbConfirmMode === 'schedule' && scheduledAt
+            ? new Date(scheduledAt).toISOString()
+            : null
+        }
+        initialAccountId={initialPost?.social_account_id ?? null}
+        pending={fbConfirmPending}
+        onCancel={() => {
+          if (fbConfirmPending) return;
+          setFbConfirmOpen(false);
+        }}
+        onConfirm={handleFbConfirm}
+      />
     </>
   );
 }

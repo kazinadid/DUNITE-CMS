@@ -164,6 +164,14 @@ export async function publishFacebookPost(
     },
   });
 
+  // Mark the post as 'publishing' so the UI surfaces show the in-flight state
+  // consistently (matches the post lifecycle: draft|scheduled → publishing →
+  // published|failed). Both API-route and cron-driven invocations land here.
+  await admin
+    .from('posts')
+    .update({ status: 'publishing', updated_at: new Date().toISOString() })
+    .eq('id', ctx.postId);
+
   try {
     const pageId = account.external_id as string;
     const message = sanitizeMessage(post.content as string);
@@ -222,20 +230,24 @@ export async function publishFacebookPost(
         ? (post.publish_metadata as Record<string, unknown>)
         : {};
 
+    const successAt = new Date().toISOString();
     await admin.from('posts').update({
+      status:                  'published',
+      published_at:            successAt,
       external_post_id:        externalId,
       social_account_id:       account.id,
       published_by:            ctx.gate.userId,
       last_publish_error:      null,
-      last_publish_attempt_at: new Date().toISOString(),
+      last_publish_attempt_at: successAt,
       publish_attempt_count:   (post.publish_attempt_count ?? 0) + 1,
       publish_locked_at:       null,
       publish_locked_by:       null,
+      updated_at:              successAt,
       publish_metadata:        {
         ...existingMeta,
         facebook: {
           external_post_id: externalId,
-          published_at:       new Date().toISOString(),
+          published_at:       successAt,
           format,
         },
       },
@@ -278,12 +290,15 @@ export async function publishFacebookPost(
         ? mapped.message
         : (e instanceof Error ? e.message : 'facebook_publish_failed');
 
+    const failureAt = new Date().toISOString();
     await admin.from('posts').update({
+      status:                  'failed',
       last_publish_error:      sanitizeMessage(brief, 2048),
-      last_publish_attempt_at: new Date().toISOString(),
+      last_publish_attempt_at: failureAt,
       publish_attempt_count:   (post.publish_attempt_count ?? 0) + 1,
       publish_locked_at:       null,
       publish_locked_by:       null,
+      updated_at:              failureAt,
     }).eq('id', ctx.postId);
 
     await admin.from('post_publish_events').insert({

@@ -42,8 +42,12 @@ import {
   publishNow,
   rescheduleCalendarPost,
   resetToDraft,
+  UnifiedPublishConfirmDialog,
+  publishToFacebook,
 } from '@/features/posts';
 import type { Post } from '@/features/posts';
+import { getPost } from '@/features/posts/services/postsService';
+import type { SocialAccount } from '@/features/integrations/types';
 import {
   canDeletePost,
   canEditPost,
@@ -80,6 +84,8 @@ export function CalendarEventDetailsModal({
 
   const [busy,           setBusy]           = useState<string | null>(null);
   const [deleteOpen,     setDeleteOpen]     = useState(false);
+  const [fbConfirmOpen,    setFbConfirmOpen]    = useState(false);
+  const [fbConfirmPending, setFbConfirmPending] = useState(false);
   const [scheduledInput, setScheduledInput] = useState(() =>
     post?.scheduled_at ? isoToDatetimeLocalInput(post.scheduled_at) : '',
   );
@@ -192,6 +198,12 @@ export function CalendarEventDetailsModal({
 
   const handlePublishNow = async () => {
     if (!post || !publishable) return;
+    // When Facebook is one of the platforms, route through the unified
+    // confirmation dialog so the operator picks a target Page first.
+    if (post.platforms.includes('facebook')) {
+      setFbConfirmOpen(true);
+      return;
+    }
     setBusy('publish');
     try {
       const updated = await publishNow(post.id);
@@ -203,6 +215,31 @@ export function CalendarEventDetailsModal({
         description: e instanceof Error ? e.message : 'Insufficient permission?',
       });
     } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleFbConfirmPublish = async (account: SocialAccount) => {
+    if (!post) return;
+    setFbConfirmPending(true);
+    setBusy('publish');
+    try {
+      await publishToFacebook(post.id, account.id);
+      // Re-fetch so calendar reflects the publishing→published transition.
+      const refreshed = await getPost(post.id).catch(() => null);
+      if (refreshed) onPostUpdated(refreshed);
+      success({
+        title:       'Published to Facebook',
+        description: 'This post is live on Facebook.',
+      });
+      setFbConfirmOpen(false);
+    } catch (e: unknown) {
+      toastError({
+        title:       'Publish failed',
+        description: e instanceof Error ? e.message : 'Could not publish to Facebook.',
+      });
+    } finally {
+      setFbConfirmPending(false);
       setBusy(null);
     }
   };
@@ -506,6 +543,20 @@ export function CalendarEventDetailsModal({
         itemLabel={post.content}
         isPending={busy === 'delete'}
         onConfirm={() => void handleConfirmDelete()}
+      />
+
+      <UnifiedPublishConfirmDialog
+        open={fbConfirmOpen}
+        mode="publish"
+        contentPreview={post.content}
+        scheduledFor={null}
+        initialAccountId={post.social_account_id ?? null}
+        pending={fbConfirmPending}
+        onCancel={() => {
+          if (fbConfirmPending) return;
+          setFbConfirmOpen(false);
+        }}
+        onConfirm={handleFbConfirmPublish}
       />
     </>
   );

@@ -51,6 +51,10 @@ import {
   type StatusFilter,
 } from '@/features/posts';
 import type { ListPostsPageParams } from '@/features/posts/services/postsService';
+import { getPost } from '@/features/posts/services/postsService';
+import { publishToFacebook } from '@/features/posts/lib/unifiedFacebookPublish';
+import { UnifiedPublishConfirmDialog } from '@/features/posts/components/UnifiedPublishConfirmDialog';
+import type { SocialAccount } from '@/features/integrations/types';
 import {
   canCreatePost,
   canDeletePost,
@@ -119,6 +123,8 @@ export function PostsPageClient({
   const [retryingJobId,   setRetryingJobId]  = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Post | null>(null);
   const [detailPost,    setDetailPost]    = useState<Post | null>(null);
+  const [fbConfirmPost,    setFbConfirmPost]    = useState<Post | null>(null);
+  const [fbConfirmPending, setFbConfirmPending] = useState(false);
   const [isRefreshing,  startRefresh]     = useTransition();
   const [pageLoading,   setPageLoading]   = useState(false);
 
@@ -336,6 +342,12 @@ export function PostsPageClient({
 
   const handlePublishOne = useCallback(
     async (post: Post) => {
+      // When Facebook is one of the platforms, route through the unified
+      // confirmation dialog so the operator picks a target Page first.
+      if (post.platforms.includes('facebook')) {
+        setFbConfirmPost(post);
+        return;
+      }
       try {
         const updated = await publishNow(post.id);
         setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
@@ -351,6 +363,37 @@ export function PostsPageClient({
       }
     },
     [success, showError],
+  );
+
+  const handleFbConfirmPublish = useCallback(
+    async (account: SocialAccount) => {
+      const post = fbConfirmPost;
+      if (!post) return;
+      setFbConfirmPending(true);
+      try {
+        await publishToFacebook(post.id, account.id);
+        // Re-fetch the updated row so the publishing→published transition
+        // recorded by the server appears in the feed immediately.
+        const updated = await getPost(post.id).catch(() => null);
+        if (updated) {
+          setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        }
+        success({
+          title:       'Published to Facebook',
+          description: 'This post is live on Facebook.',
+        });
+        setFbConfirmPost(null);
+      } catch (e: unknown) {
+        showError({
+          title:       'Publish failed',
+          description:
+            e instanceof Error ? e.message : 'Could not publish to Facebook.',
+        });
+      } finally {
+        setFbConfirmPending(false);
+      }
+    },
+    [fbConfirmPost, success, showError],
   );
 
   const handleMoveDraftOne = useCallback(
@@ -763,6 +806,20 @@ export function PostsPageClient({
           }}
         />
       ) : null}
+
+      <UnifiedPublishConfirmDialog
+        open={fbConfirmPost !== null}
+        mode="publish"
+        contentPreview={fbConfirmPost?.content ?? ''}
+        scheduledFor={null}
+        initialAccountId={fbConfirmPost?.social_account_id ?? null}
+        pending={fbConfirmPending}
+        onCancel={() => {
+          if (fbConfirmPending) return;
+          setFbConfirmPost(null);
+        }}
+        onConfirm={handleFbConfirmPublish}
+      />
 
       <ConfirmDialog
         open={bulkConfirm === 'delete'}
