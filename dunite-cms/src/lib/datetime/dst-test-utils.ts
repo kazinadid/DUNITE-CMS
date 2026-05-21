@@ -67,8 +67,8 @@ export function testDSTRoundTrip(
   const utcTime = original.toUTC().toISO();
   const recovered = DateTime.fromISO(utcTime!).setZone(zone);
   
-  const offsetBefore = original.offsetNameShort;
-  const offsetAfter = recovered.offsetNameShort;
+  const offsetBefore = original.offsetNameShort ?? 'unknown';
+  const offsetAfter = recovered.offsetNameShort ?? 'unknown';
   
   // Check if hour shifted (DST gap)
   const hourShifted = original.hour !== recovered.hour;

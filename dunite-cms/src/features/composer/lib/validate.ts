@@ -1,4 +1,5 @@
 import { utcInstantMs } from '@/lib/date';
+import { extractHashtags } from './hashtags';
 import { PLATFORMS } from './platforms';
 import { PLATFORM_BYTES_RULES, REEL_ASPECT_RATIO } from './platformRules';
 import { splitIntoTweetThread } from './twitterThread';

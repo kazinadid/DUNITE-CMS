@@ -85,7 +85,8 @@ export function datetimeLocalInterpretationZone(): string {
   return resolveLocalTimeZone();
 }
 
-function toDate(input: string | number | Date): Date | null {
+function toDate(input: string | number | Date | null | undefined): Date | null {
+  if (input == null) return null;
   if (input instanceof Date) {
     return Number.isNaN(input.getTime()) ? null : input;
   }
