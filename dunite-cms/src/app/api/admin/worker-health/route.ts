@@ -8,27 +8,20 @@
  */
 
 import { NextRequest } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { getMetricsSnapshot, getQueueDepth, getRecentFailures } from '@/lib/publishing/worker-observability';
-import { requireAuth } from '@/lib/supabase/server';
+import { createAuthenticatedSupabaseServerClient } from '@/lib/supabase/server';
 
 export async function GET(req: NextRequest) {
   try {
-    const { auth, user } = await requireAuth();
-    
-    if (!user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+    void req;
+    const { supabase, user } = await createAuthenticatedSupabaseServerClient();
     
     // Get user role to check if admin
-    const { data: profile } = await auth.supabase
-      .from('profiles')
+    const { data: profile } = await supabase
+      .from('users')
       .select('role')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
     
     if (profile?.role !== 'admin') {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {

@@ -150,4 +150,4 @@ select
 from pg_policies
 where schemaname = 'public'
   and tablename  = 'activity_logs'
-  and policyname = 'activity_logs: select scoped';
+  and policyname = 'activity_logs: select scoped'; 
