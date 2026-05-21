@@ -1,0 +1,61 @@
+{
+  "updatedAt": "2026-05-21T14:29:15.053Z",
+  "cwd": "F:\\DUNITE-CMS\\dunite-cms",
+  "count": 3,
+  "items": [
+    {
+      "sessionId": "e436a7",
+      "hypothesisId": "UNLOAD-BEACON",
+      "location": "tzDebugIngestClient:pagehide",
+      "message": "flush window.__duniteTzTrail tail on unload",
+      "data": {
+        "pageOrigin": "http://localhost:3000",
+        "pagePath": "/dashboard/imports",
+        "nodeEnvBundled": "development",
+        "trailTail": [
+          {
+            "receivedAtMs": 1779373058817,
+            "hypothesisId": "DASH-MOUNT",
+            "location": "dashboard/layout.tsx:authenticated",
+            "peek": {
+              "interpZone": "Asia/Dhaka",
+              "workspaceTz": "Asia/Dhaka",
+              "pathname": "/dashboard",
+              "origin": "http://localhost:3000",
+              "nodeEnvBundled": "development",
+              "browserTz": "Asia/Dhaka"
+            },
+            "pageOrigin": "http://localhost:3000",
+            "pagePath": "/dashboard",
+            "nodeEnv": "development"
+          }
+        ]
+      },
+      "timestamp": 1779373753195,
+      "_receivedAtMs": 1779373754475
+    },
+    {
+      "sessionId": "e436a7",
+      "hypothesisId": "DASH-MOUNT",
+      "location": "dashboard/layout.tsx:authenticated",
+      "message": "dashboard authenticated shell (timezone debug boot)",
+      "data": {
+        "pathname": "/dashboard/imports",
+        "origin": "http://localhost:3000",
+        "nodeEnvBundled": "development",
+        "workspaceTz": "Asia/Dhaka",
+        "interpZone": "Asia/Dhaka",
+        "browserTz": "Asia/Dhaka"
+      },
+      "timestamp": 1779373754358,
+      "_receivedAtMs": 1779373754761
+    },
+    {
+      "hypothesisId": "EXPORT-BUNDLE",
+      "_exportsAtMs": 1779373754807,
+      "_trailLen": 1,
+      "_rollLen": 32,
+      "_receivedAtMs": 1779373755044
+    }
+  ]
+}
