@@ -8,7 +8,7 @@ import type { PlatformId } from '@/features/composer/types';
 export const CALENDAR_PLATFORM_DOT: Record<string, string> = {
   facebook:  '#1877F2',
   instagram: '#9333EA',
-  linkedin:  '#06B6D4',
+  linkedin:  '#0A66C2',
   twitter:   '#0F1419',
 };
 
@@ -42,7 +42,7 @@ export const CALENDAR_PLATFORM_CHROME: Record<
   instagram:
     'bg-gradient-to-br from-[#7C4DFF]/18 via-[#C026D3]/12 to-[#FB2775]/14 text-[#86198f] shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] ring-1 ring-purple-400/35',
   linkedin:
-    'bg-gradient-to-br from-[#0891b2]/16 to-[#0ea5e9]/10 text-[#0e7490] shadow-[inset_0_1px_0_rgba(255,255,255,0.88)] ring-1 ring-cyan-500/32',
+    'bg-[#0A66C2]/12 text-[#0A66C2] shadow-[inset_0_1px_0_rgba(255,255,255,0.88)] ring-1 ring-[#0A66C2]/30',
   twitter:
     'bg-zinc-900 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] ring-1 ring-zinc-700/65',
 };

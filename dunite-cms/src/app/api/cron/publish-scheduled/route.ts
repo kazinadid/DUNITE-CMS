@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { runScheduledFacebookPublishingTick } from '@/lib/social/facebook/scheduler';
+import { runScheduledLinkedInPublishingTick } from '@/lib/social/linkedin/scheduler';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,11 +23,15 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await runScheduledFacebookPublishingTick();
+    const [fbResult, liResult] = await Promise.all([
+      runScheduledFacebookPublishingTick(),
+      runScheduledLinkedInPublishingTick(),
+    ]);
+    
     return NextResponse.json({
       ok:        true as const,
-      processed: result.processed,
-      errors:    result.errors,
+      facebook:  fbResult,
+      linkedin:  liResult,
     });
   } catch (e: unknown) {
     console.error('[cron/publish-scheduled]', e);

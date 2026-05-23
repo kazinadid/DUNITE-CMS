@@ -118,6 +118,16 @@ export interface PendingFacebookPage {
   tasks: string[];
 }
 
+/** Normalized organization data stored in oauth_states.metadata during LinkedIn selection */
+export interface PendingLinkedInOrganization {
+  urn: string;             // organization URN (e.g., urn:li:organization:123456)
+  name: string;
+  logo_url: string | null;
+  /** Encrypted organization access token — never expose raw value */
+  encrypted_access_token: string;
+  role: string;            // ADMIN role
+}
+
 /** Debug token response from Graph API */
 export interface FacebookTokenDebugResponse {
   data: {
@@ -164,8 +174,12 @@ export interface OAuthStateMetadata {
   token_issued_at?: string;
   /** Facebook User ID from Graph `/me` after OAuth */
   facebook_user_id?: string;
-  /** Available pages (with encrypted page tokens) */
+  /** LinkedIn Member ID from OAuth profile */
+  linkedin_member_id?: string;
+  /** Available pages (with encrypted page tokens) — Facebook */
   pages?: PendingFacebookPage[];
+  /** Available organizations (with encrypted tokens) — LinkedIn */
+  organizations?: PendingLinkedInOrganization[];
 }
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
